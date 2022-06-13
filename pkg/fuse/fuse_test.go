@@ -27,22 +27,7 @@ type testStorer struct {
 	mp map[string][]byte
 }
 
-func (t *testStorer) Info() string {
-	return "mockstorer"
-}
-
-func (t *testStorer) GetItem(i store.Item) error {
-	buf := t.mp[string(i.Key())]
-	return i.Unmarshal(buf)
-}
-
-func (t *testStorer) StoreItem(i store.Item) error {
-	buf, _ := i.Marshal()
-	t.mp[string(i.Key())] = buf
-	return nil
-}
-
-func newTestFs(st *testStorer) (*fs.BeeFs, string, func(), error) {
+func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	if *logs {
 		logger.SetLogLevel("*", "Debug")
 	}
@@ -79,7 +64,7 @@ func newTestFs(st *testStorer) (*fs.BeeFs, string, func(), error) {
 }
 
 func TestFileBasic(t *testing.T) {
-	st := &testStorer{MockStorer: mock.NewStorer(), mp: make(map[string][]byte)}
+	st := mock.NewStorer()
 	_, mntDir, closer, err := newTestFs(st)
 	if err != nil {
 		t.Fatal(err)
@@ -181,8 +166,8 @@ func TestMultiDirWithFiles(t *testing.T) {
 		},
 	}
 
-	st := &testStorer{MockStorer: mock.NewStorer(), mp: make(map[string][]byte)}
-	fsImpl, mntDir, closer, err := newTestFs(st)
+	st := mock.NewStorer()
+	_, mntDir, closer, err := newTestFs(st)
 	if err != nil {
 		t.Fatal(err)
 	}
