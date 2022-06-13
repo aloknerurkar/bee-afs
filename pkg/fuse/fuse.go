@@ -77,11 +77,30 @@ func (f *fsNode) isDir() bool {
 }
 
 func (f *fsNode) Close() error {
-	return f.commit()
+	err := f.commit()
+	if err != nil {
+		log.Errorf("failed closing %s err: %v", f.id, err)
+	}
+	return err
 }
 
-func (f *fsNode) clone(newpath string) *fsNode {
-	return nil
+func (f *fsNode) clone(newpath string) (*fsNode, error) {
+	rdr, _, err := f.metadata()
+	if err != nil {
+		return nil, fmt.Errorf("failed getting metadata reader %w", err)
+	}
+	defer rdr.Close()
+
+	mdCopy, err := fromMetadata(rdr)
+	if err != nil {
+		return nil, fmt.Errorf("failed creating copy from metadata %w", err)
+	}
+	nodeCopy := &fsNode{
+		stat:     mdCopy.Stat,
+		xatr:     mdCopy.Xatr,
+		children: mdCopy.Children,
+	}
+	return nodeCopy, nil
 }
 
 type FsMetadata struct {
@@ -126,7 +145,6 @@ type BeeFs struct {
 	lock    sync.Mutex
 	ino     uint64
 	openmap map[uint64]*fsNode
-	pin     bool
 	encrypt bool
 	store   store.PutGetter
 	id      string
@@ -135,12 +153,6 @@ type BeeFs struct {
 }
 
 type Option func(*BeeFs)
-
-func WithPin(val bool) Option {
-	return func(r *BeeFs) {
-		r.pin = val
-	}
-}
 
 func WithEncryption(val bool) Option {
 	return func(r *BeeFs) {
@@ -205,6 +217,7 @@ func (b *BeeFs) Link(oldpath string, newpath string) (errc int) {
 
 	newnode := b.lookupNode(newpath)
 	if nil != newnode {
+		log.Errorf("node already exists %s", newpath)
 		return -fuse.EEXIST
 	}
 
@@ -214,8 +227,15 @@ func (b *BeeFs) Link(oldpath string, newpath string) (errc int) {
 	}
 	defer newprnt.Close()
 
-	newnode = oldnode.clone(newpath)
-	if err := newnode.Close(); err != nil {
+	var err error
+	newnode, err = oldnode.clone(newpath)
+	if err != nil {
+		log.Errorf("failed cloning node %v", err)
+		return -fuse.EIO
+	}
+	err = newnode.Close()
+	if err != nil {
+		log.Errorf("failed closing new node %v", err)
 		return -fuse.EIO
 	}
 
@@ -244,11 +264,13 @@ func (b *BeeFs) Readlink(path string) (errc int, target string) {
 		return -fuse.ENOENT, ""
 	}
 	if fuse.S_IFLNK != node.stat.Mode&fuse.S_IFMT {
+		log.Errorf("node not a link %+v", node)
 		return -fuse.EINVAL, ""
 	}
 	linkBuf := make([]byte, 1024)
 	_, err := node.data.ReadAt(linkBuf, 0)
 	if err != nil {
+		log.Errorf("failed reading link %v", err)
 		return -fuse.EIO, ""
 	}
 	return 0, string(linkBuf)
@@ -273,6 +295,7 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 
 	if oldnode.isDir() && strings.Contains(newpath, filepath.Dir(oldpath)) {
 		// directory loop creation
+		log.Errorf("invalid directory creation newpath: %q oldpath %q", newpath, oldpath)
 		return -fuse.EINVAL
 	}
 
@@ -297,8 +320,15 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 		}
 	}
 
-	newnode = oldnode.clone(newpath)
-	if err := newnode.Close(); err != nil {
+	var err error
+	newnode, err = oldnode.clone(newpath)
+	if err != nil {
+		log.Errorf("failed cloning %q: %v", newpath, err)
+		return -fuse.EIO
+	}
+	err = newnode.Close()
+	if err != nil {
+		log.Errorf("failed closing node %v", err)
 		return -fuse.EIO
 	}
 
@@ -390,6 +420,7 @@ func (b *BeeFs) Truncate(path string, size int64, fh uint64) (errc int) {
 	}
 	err := node.data.Truncate(size)
 	if err != nil {
+		log.Errorf("failed truncating file %v", err)
 		return -fuse.EIO
 	}
 	node.stat.Size = size
@@ -441,6 +472,7 @@ func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	var err error
 	n, err = node.data.WriteAt(buff, ofst)
 	if err != nil {
+		log.Errorf("failed write %v", err)
 		return -fuse.EIO
 	}
 	tmsp := fuse.Now()
@@ -505,14 +537,17 @@ func (b *BeeFs) Setxattr(path string, name string, value []byte, flags int) (err
 	defer node.Close()
 
 	if "com.apple.ResourceFork" == name {
+		log.Errorf("unsupported xatr %v", name)
 		return -fuse.ENOTSUP
 	}
 	if fuse.XATTR_CREATE == flags {
 		if _, ok := node.xatr[name]; ok {
+			log.Errorf("xatr already exists %v", name)
 			return -fuse.EEXIST
 		}
 	} else if fuse.XATTR_REPLACE == flags {
 		if _, ok := node.xatr[name]; !ok {
+			log.Errorf("xatr not found %v", name)
 			return -fuse.ENOATTR
 		}
 	}
@@ -534,10 +569,12 @@ func (b *BeeFs) Getxattr(path string, name string) (errc int, xatr []byte) {
 		return -fuse.ENOENT, nil
 	}
 	if "com.apple.ResourceFork" == name {
+		log.Errorf("unsupported xatr %v", name)
 		return -fuse.ENOTSUP, nil
 	}
 	xatr, ok := node.xatr[name]
 	if !ok {
+		log.Errorf("xatr not found %v", name)
 		return -fuse.ENOATTR, nil
 	}
 	return 0, xatr
@@ -554,9 +591,11 @@ func (b *BeeFs) Removexattr(path string, name string) (errc int) {
 	defer node.Close()
 
 	if "com.apple.ResourceFork" == name {
+		log.Errorf("unsupported xatr %v", name)
 		return -fuse.ENOTSUP
 	}
 	if _, ok := node.xatr[name]; !ok {
+		log.Errorf("xatr not found %v", name)
 		return -fuse.ENOATTR
 	}
 	delete(node.xatr, name)
@@ -573,6 +612,7 @@ func (b *BeeFs) Listxattr(path string, fill func(name string) bool) (errc int) {
 	}
 	for name := range node.xatr {
 		if !fill(name) {
+			log.Errorf("failed to fill xatr %s", name)
 			return -fuse.ERANGE
 		}
 	}
@@ -695,16 +735,19 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 
 	ref, err := b.lk.Get(ctx, b.metadataKey(path), latest)
 	if err != nil {
+		log.Warnf("failed getting key %s err: %v", b.metadataKey(path), err)
 		return nil
 	}
 
 	reader, _, err := joiner.New(context.Background(), b.store, ref)
 	if err != nil {
+		log.Errorf("failed creating reader for metadata %s: %v", ref.String(), err)
 		return nil
 	}
 
 	md, err := fromMetadata(reader)
 	if err != nil {
+		log.Errorf("failed reading metadata %s: %v", path, err)
 		return nil
 	}
 
@@ -738,6 +781,7 @@ func (b *BeeFs) makeNode(path string, mode uint32, dev uint64, data []byte) int 
 	if nil != data {
 		n, err := node.data.Write(data)
 		if err != nil {
+			log.Errorf("failed writing data to node %s: %v", path, err)
 			return -fuse.EIO
 		}
 		node.stat.Size = int64(n)
@@ -767,13 +811,16 @@ func (b *BeeFs) removeNode(path string, dir bool) int {
 	defer node.Close()
 
 	if !dir && fuse.S_IFDIR == node.stat.Mode&fuse.S_IFMT {
+		log.Errorf("failed removing %s is a dir", path)
 		return -fuse.EISDIR
 	}
 	if dir && fuse.S_IFDIR != node.stat.Mode&fuse.S_IFMT {
+		log.Errorf("failed removing %s is not a dir", path)
 		return -fuse.ENOTDIR
 	}
 
 	if 0 < len(node.children) {
+		log.Errorf("failed removing %s is a dir and not empty", path)
 		return -fuse.ENOTEMPTY
 	}
 	node.stat.Nlink--
@@ -796,9 +843,11 @@ func (b *BeeFs) openNode(path string, dir bool) (int, uint64) {
 		return -fuse.ENOENT, ^uint64(0)
 	}
 	if !dir && fuse.S_IFDIR == node.stat.Mode&fuse.S_IFMT {
+		log.Errorf("failed opening node %s is a dir", path)
 		return -fuse.EISDIR, ^uint64(0)
 	}
 	if dir && fuse.S_IFDIR != node.stat.Mode&fuse.S_IFMT {
+		log.Errorf("failed opening node %s is not a dir", path)
 		return -fuse.ENOTDIR, ^uint64(0)
 	}
 	node.opencnt++
@@ -831,6 +880,10 @@ func (b *BeeFs) getNode(path string, fh uint64) *fsNode {
 		b.openmap[fh] = nd
 	}
 	return nd
+}
+
+func (b *BeeFs) clone(nd *fsNode) error {
+	return nil
 }
 
 func (b *BeeFs) synchronize() func() {
