@@ -22,6 +22,10 @@ type pubImpl struct {
 	updaterMap sync.Map
 }
 
+func New(putter storage.Putter, signer crypto.Signer) Publisher {
+	return &pubImpl{putter: putter, signer: signer}
+}
+
 func (p *pubImpl) Put(ctx context.Context, id string, version int64, ref swarm.Address) error {
 	upd, err := p.updater(id)
 	if err != nil {

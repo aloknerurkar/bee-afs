@@ -35,7 +35,7 @@ func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm
 		return swarm.ZeroAddress, fmt.Errorf("failed creating lookuper %w", err)
 	}
 
-	ch, _, _, err := lk.At(context.Background(), time.Now().Unix(), l.hint(id))
+	ch, _, _, err := lk.At(context.Background(), time.Now().UnixNano(), l.hint(id))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed looking up key %w", err)
 	}

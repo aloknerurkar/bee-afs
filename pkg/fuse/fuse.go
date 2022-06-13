@@ -145,8 +145,24 @@ func WithEncryption(val bool) Option {
 	}
 }
 
-func New(st store.PutGetter, opts ...Option) (*BeeFs, error) {
-	b := &BeeFs{}
+func WithNamespace(id string) Option {
+	return func(r *BeeFs) {
+		r.id = id
+	}
+}
+
+func New(
+	st store.PutGetter,
+	lk lookuper.Lookuper,
+	pb publisher.Publisher,
+	opts ...Option,
+) (*BeeFs, error) {
+	b := &BeeFs{
+		id:    "bee-afs",
+		store: st,
+		lk:    lk,
+		pb:    pb,
+	}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -155,43 +171,51 @@ func New(st store.PutGetter, opts ...Option) (*BeeFs, error) {
 }
 
 func (b *BeeFs) Init() {
-	defer trace(time.Now(), new(int))
+	defer b.synchronize()()
+
+	b.ino++
+	uid, gid, _ := fuse.Getcontext()
+	node := b.newNode("/", 0, b.ino, fuse.S_IFDIR|00777, uid, gid)
+	err := node.Close()
+	if err != nil {
+		panic(err)
+	}
+	log.Infof("initialized new mount %s", b.id)
 }
 
 func (b *BeeFs) Destroy() {
-	defer trace(time.Now(), new(int))
+	defer b.synchronize()()
+
+	for _, nd := range b.openmap {
+		nd.Close()
+	}
 }
 
 func (b *BeeFs) Mknod(path string, mode uint32, dev uint64) (errc int) {
-	defer trace(time.Now(), &errc, path, mode, dev)
 	defer b.synchronize()()
 
 	return b.makeNode(path, mode, dev, nil)
 }
 
 func (b *BeeFs) Mkdir(path string, mode uint32) (errc int) {
-	defer trace(time.Now(), &errc, path, mode)
 	defer b.synchronize()()
 
 	return b.makeNode(path, fuse.S_IFDIR|(mode&07777), 0, nil)
 }
 
 func (b *BeeFs) Unlink(path string) (errc int) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	return b.removeNode(path, false)
 }
 
 func (b *BeeFs) Rmdir(path string) (errc int) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	return b.removeNode(path, true)
 }
 
 func (b *BeeFs) Link(oldpath string, newpath string) (errc int) {
-	defer trace(time.Now(), &errc, oldpath, newpath)
 	defer b.synchronize()()
 
 	oldnode := b.lookupNode(oldpath)
@@ -223,14 +247,12 @@ func (b *BeeFs) Link(oldpath string, newpath string) (errc int) {
 }
 
 func (b *BeeFs) Symlink(target string, newpath string) (errc int) {
-	defer trace(time.Now(), &errc, target, newpath)
 	defer b.synchronize()()
 
 	return b.makeNode(newpath, fuse.S_IFLNK|00777, 0, []byte(target))
 }
 
 func (b *BeeFs) Readlink(path string) (errc int, target string) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -251,7 +273,6 @@ func (b *BeeFs) Readlink(path string) (errc int, target string) {
 }
 
 func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
-	defer trace(time.Now(), &errc, oldpath, newpath)
 	defer b.synchronize()()
 
 	if newpath == oldpath {
@@ -295,7 +316,7 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 	}
 
 	oldnode.id = newpath
-	err = oldnode.Close()
+	err := oldnode.Close()
 	if err != nil {
 		log.Errorf("failed closing node %v", err)
 		return -fuse.EIO
@@ -305,7 +326,6 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 }
 
 func (b *BeeFs) Chmod(path string, mode uint32) (errc int) {
-	defer trace(time.Now(), &errc, path, mode)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -320,7 +340,6 @@ func (b *BeeFs) Chmod(path string, mode uint32) (errc int) {
 }
 
 func (b *BeeFs) Chown(path string, uid uint32, gid uint32) (errc int) {
-	defer trace(time.Now(), &errc, path, uid, gid)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -340,7 +359,6 @@ func (b *BeeFs) Chown(path string, uid uint32, gid uint32) (errc int) {
 }
 
 func (b *BeeFs) Utimens(path string, tmsp []fuse.Timespec) (errc int) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -361,14 +379,12 @@ func (b *BeeFs) Utimens(path string, tmsp []fuse.Timespec) (errc int) {
 }
 
 func (b *BeeFs) Open(path string, flags int) (errc int, fh uint64) {
-	defer trace(time.Now(), &errc, path, flags)
 	defer b.synchronize()()
 
 	return b.openNode(path, false)
 }
 
 func (b *BeeFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
-	defer trace(time.Now(), &errc, path, fh)
 	defer b.synchronize()()
 
 	node := b.getNode(path, fh)
@@ -380,7 +396,6 @@ func (b *BeeFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 }
 
 func (b *BeeFs) Truncate(path string, size int64, fh uint64) (errc int) {
-	defer trace(time.Now(), &errc, path, size, fh)
 	defer b.synchronize()()
 
 	node := b.getNode(path, fh)
@@ -401,7 +416,6 @@ func (b *BeeFs) Truncate(path string, size int64, fh uint64) (errc int) {
 }
 
 func (b *BeeFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
-	defer trace(time.Now(), &n, path, ofst, fh)
 	defer b.synchronize()()
 
 	node := b.getNode(path, fh)
@@ -427,7 +441,6 @@ func (b *BeeFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 }
 
 func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
-	defer trace(time.Now(), &n, path, ofst, fh)
 	defer b.synchronize()()
 
 	node := b.getNode(path, fh)
@@ -451,14 +464,12 @@ func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 }
 
 func (b *BeeFs) Release(path string, fh uint64) (errc int) {
-	defer trace(time.Now(), &errc, path, fh)
 	defer b.synchronize()()
 
 	return b.closeNode(fh)
 }
 
 func (b *BeeFs) Opendir(path string) (errc int, fh uint64) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	return b.openNode(path, true)
@@ -470,7 +481,6 @@ func (b *BeeFs) Readdir(
 	ofst int64,
 	fh uint64,
 ) (errc int) {
-	defer trace(time.Now(), &errc, path, ofst, fh)
 	defer b.synchronize()()
 
 	node := b.getNode(path, fh)
@@ -490,14 +500,12 @@ func (b *BeeFs) Readdir(
 }
 
 func (b *BeeFs) Releasedir(path string, fh uint64) (errc int) {
-	defer trace(time.Now(), &errc, path, fh)
 	defer b.synchronize()()
 
 	return b.closeNode(fh)
 }
 
 func (b *BeeFs) Setxattr(path string, name string, value []byte, flags int) (errc int) {
-	defer trace(time.Now(), &errc, path, name, flags)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -531,7 +539,6 @@ func (b *BeeFs) Setxattr(path string, name string, value []byte, flags int) (err
 }
 
 func (b *BeeFs) Getxattr(path string, name string) (errc int, xatr []byte) {
-	defer trace(time.Now(), &errc, path, name)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -551,7 +558,6 @@ func (b *BeeFs) Getxattr(path string, name string) (errc int, xatr []byte) {
 }
 
 func (b *BeeFs) Removexattr(path string, name string) (errc int) {
-	defer trace(time.Now(), &errc, path, name)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -573,7 +579,6 @@ func (b *BeeFs) Removexattr(path string, name string) (errc int) {
 }
 
 func (b *BeeFs) Listxattr(path string, fill func(name string) bool) (errc int) {
-	defer trace(time.Now(), &errc, path)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -590,7 +595,6 @@ func (b *BeeFs) Listxattr(path string, fill func(name string) bool) (errc int) {
 }
 
 func (b *BeeFs) Chflags(path string, flags uint32) (errc int) {
-	defer trace(time.Now(), &errc, path, flags)
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -605,7 +609,6 @@ func (b *BeeFs) Chflags(path string, flags uint32) (errc int) {
 }
 
 func (b *BeeFs) Setcrtime(path string, tmsp fuse.Timespec) (errc int) {
-	defer trace(time.Now(), &errc, path, tmsp.Time().String())
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -620,7 +623,6 @@ func (b *BeeFs) Setcrtime(path string, tmsp fuse.Timespec) (errc int) {
 }
 
 func (b *BeeFs) Setchgtime(path string, tmsp fuse.Timespec) (errc int) {
-	defer trace(time.Now(), &errc, path, tmsp.Time().String())
 	defer b.synchronize()()
 
 	node := b.lookupNode(path)
@@ -658,20 +660,23 @@ func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() e
 					return fmt.Errorf("failed publishing link metadata %s: %w", link, err)
 				}
 			}
+			log.Debugf("committed metadata %s: %s", b.metadataKey(f.id), addr.String())
 		}
-		dataAddr, err := f.data.Close()
-		if err != nil {
-			return fmt.Errorf("failed closing file %w", err)
-		}
-		if !dataAddr.Equal(dataRef) {
-			err = b.pb.Put(ctx, b.dataKey(f.id), now, addr)
+		if !f.isDir() {
+			dataAddr, err := f.data.Close()
 			if err != nil {
-				return fmt.Errorf("failed publishing data %w", err)
+				return fmt.Errorf("failed closing file %w", err)
 			}
-			for _, link := range f.links {
-				err = b.pb.Put(ctx, b.dataKey(link), now, addr)
+			if !dataAddr.Equal(dataRef) {
+				err = b.pb.Put(ctx, b.dataKey(f.id), now, addr)
 				if err != nil {
-					return fmt.Errorf("failed publishing link data %s: %w", link, err)
+					return fmt.Errorf("failed publishing data %w", err)
+				}
+				for _, link := range f.links {
+					err = b.pb.Put(ctx, b.dataKey(link), now, addr)
+					if err != nil {
+						return fmt.Errorf("failed publishing link data %s: %w", link, err)
+					}
 				}
 			}
 		}
@@ -707,14 +712,16 @@ func (b *BeeFs) newNode(id string, dev uint64, ino uint64, mode uint32, uid uint
 }
 
 func (b *BeeFs) metadataKey(id string) string {
-	return fmt.Sprintf("%s/%s/mtdt", b.id, id)
+	return filepath.Join(b.id, id, "mtdt")
 }
 
 func (b *BeeFs) dataKey(id string) string {
-	return fmt.Sprintf("%s/%s/data", b.id, id)
+	return filepath.Join(b.id, id, "data")
 }
 
 func (b *BeeFs) lookupNode(path string) (node *fsNode) {
+	log.Debugf("lookup req %s", path)
+
 	ctx := context.Background()
 	latest := time.Now().UnixNano()
 
@@ -723,6 +730,8 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 		log.Warnf("failed getting key %s err: %v", b.metadataKey(path), err)
 		return nil
 	}
+
+	log.Debugf("got ref %s on lookup", ref.String())
 
 	reader, _, err := joiner.New(context.Background(), b.store, ref)
 	if err != nil {
@@ -752,7 +761,8 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 
 	node.commit = b.commitNodeFn(node, ref, dataRef)
 
-	return
+	log.Debugf("lookup result %+v", node)
+	return node
 }
 
 func (b *BeeFs) makeNode(path string, mode uint32, dev uint64, data []byte) int {
@@ -829,6 +839,7 @@ func (b *BeeFs) removeNode(path string, dir bool) int {
 }
 
 func (b *BeeFs) openNode(path string, dir bool) (int, uint64) {
+	log.Debugf("openNode %s", path)
 	node := b.lookupNode(path)
 	if nil == node {
 		return -fuse.ENOENT, ^uint64(0)
@@ -871,10 +882,6 @@ func (b *BeeFs) getNode(path string, fh uint64) *fsNode {
 		b.openmap[fh] = nd
 	}
 	return nd
-}
-
-func (b *BeeFs) clone(nd *fsNode) error {
-	return nil
 }
 
 func (b *BeeFs) synchronize() func() {

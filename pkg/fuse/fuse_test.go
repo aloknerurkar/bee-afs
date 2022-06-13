@@ -13,8 +13,11 @@ import (
 	"time"
 
 	fs "github.com/aloknerurkar/bee-afs/pkg/fuse"
+	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
+	"github.com/aloknerurkar/bee-afs/pkg/publisher"
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/billziss-gh/cgofuse/fuse"
+	"github.com/ethersphere/bee/pkg/crypto"
 	"github.com/ethersphere/bee/pkg/storage/mock"
 	logger "github.com/ipfs/go-log/v2"
 )
@@ -27,7 +30,9 @@ type testStorer struct {
 	mp map[string][]byte
 }
 
-func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
+func newTestFs(t *testing.T, st store.PutGetter) (*fs.BeeFs, string, func(), error) {
+	t.Helper()
+
 	if *logs {
 		logger.SetLogLevel("*", "Debug")
 	}
@@ -35,7 +40,18 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	if err != nil {
 		return nil, "", func() {}, err
 	}
-	fsImpl, err := fs.New(st)
+
+	pk, _ := crypto.GenerateSecp256k1Key()
+	signer := crypto.NewDefaultSigner(pk)
+	owner, err := signer.EthereumAddress()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lk := lookuper.New(st, owner)
+	pb := publisher.New(st, signer)
+
+	fsImpl, err := fs.New(st, lk, pb)
 	if err != nil {
 		return nil, "", func() {}, err
 	}
@@ -65,7 +81,7 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 
 func TestFileBasic(t *testing.T) {
 	st := mock.NewStorer()
-	_, mntDir, closer, err := newTestFs(st)
+	_, mntDir, closer, err := newTestFs(t, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,18 +90,32 @@ func TestFileBasic(t *testing.T) {
 	time.Sleep(time.Second)
 
 	content := []byte("hello world")
-	fn := mntDir + "/file"
+	fn := filepath.Join(mntDir, "file1")
 
-	if err := ioutil.WriteFile(fn, content, 0755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	f, err := os.Create(fn)
+	if err != nil {
+		t.Fatalf("failed creating new file %s: %v", fn, err)
 	}
-	if got, err := ioutil.ReadFile(fn); err != nil {
+
+	n, err := f.Write(content)
+	if err != nil {
+		t.Fatalf("failed writing file %s: %v", fn, err)
+	}
+	if n != len(content) {
+		t.Fatal("invalid length of write")
+	}
+	err = f.Close()
+	if err != nil {
+		t.Fatalf("failed closing %v", err)
+	}
+
+	if got, err := os.ReadFile(fn); err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	} else if bytes.Compare(got, content) != 0 {
 		t.Fatalf("ReadFile: got %q, want %q", got, content)
 	}
 
-	f, err := os.Open(fn)
+	f, err = os.Open(fn)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -167,7 +197,7 @@ func TestMultiDirWithFiles(t *testing.T) {
 	}
 
 	st := mock.NewStorer()
-	_, mntDir, closer, err := newTestFs(st)
+	_, mntDir, closer, err := newTestFs(t, st)
 	if err != nil {
 		t.Fatal(err)
 	}
