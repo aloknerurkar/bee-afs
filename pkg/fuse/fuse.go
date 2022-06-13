@@ -64,6 +64,7 @@ type fsNode struct {
 	stat     fuse.Stat_t
 	xatr     map[string][]byte
 	children []string
+	links    []string
 	opencnt  int
 	data     *bf.BeeFile
 	commit   func() error
@@ -84,29 +85,11 @@ func (f *fsNode) Close() error {
 	return err
 }
 
-func (f *fsNode) clone(newpath string) (*fsNode, error) {
-	rdr, _, err := f.metadata()
-	if err != nil {
-		return nil, fmt.Errorf("failed getting metadata reader %w", err)
-	}
-	defer rdr.Close()
-
-	mdCopy, err := fromMetadata(rdr)
-	if err != nil {
-		return nil, fmt.Errorf("failed creating copy from metadata %w", err)
-	}
-	nodeCopy := &fsNode{
-		stat:     mdCopy.Stat,
-		xatr:     mdCopy.Xatr,
-		children: mdCopy.Children,
-	}
-	return nodeCopy, nil
-}
-
 type FsMetadata struct {
 	Stat     fuse.Stat_t
 	Xatr     map[string][]byte
 	Children []string
+	Links    []string
 }
 
 type metadataReader struct {
@@ -120,8 +103,10 @@ func (m *metadataReader) Close() error {
 
 func (f *fsNode) metadata() (io.ReadCloser, int64, error) {
 	md := FsMetadata{
-		Stat: f.stat,
-		Xatr: f.xatr,
+		Stat:     f.stat,
+		Xatr:     f.xatr,
+		Children: f.children,
+		Links:    f.links,
 	}
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(md)
@@ -227,18 +212,7 @@ func (b *BeeFs) Link(oldpath string, newpath string) (errc int) {
 	}
 	defer newprnt.Close()
 
-	var err error
-	newnode, err = oldnode.clone(newpath)
-	if err != nil {
-		log.Errorf("failed cloning node %v", err)
-		return -fuse.EIO
-	}
-	err = newnode.Close()
-	if err != nil {
-		log.Errorf("failed closing new node %v", err)
-		return -fuse.EIO
-	}
-
+	oldnode.links = append(oldnode.links, newpath)
 	oldnode.stat.Nlink++
 	newprnt.children = append(newprnt.children, filepath.Base(newpath))
 	tmsp := fuse.Now()
@@ -320,13 +294,8 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 		}
 	}
 
-	var err error
-	newnode, err = oldnode.clone(newpath)
-	if err != nil {
-		log.Errorf("failed cloning %q: %v", newpath, err)
-		return -fuse.EIO
-	}
-	err = newnode.Close()
+	oldnode.id = newpath
+	err = oldnode.Close()
 	if err != nil {
 		log.Errorf("failed closing node %v", err)
 		return -fuse.EIO
@@ -511,11 +480,12 @@ func (b *BeeFs) Readdir(
 
 	fill(".", &node.stat, 0)
 	fill("..", nil, 0)
-	// for name, chld := range node.chld {
-	// 	if !fill(name, &chld.stat, 0) {
-	// 		break
-	// 	}
-	// }
+	for _, chld := range node.children {
+		nd := b.lookupNode(filepath.Join(path, chld))
+		if nd != nil && !fill(chld, &nd.stat, 0) {
+			break
+		}
+	}
 	return 0
 }
 
@@ -665,19 +635,28 @@ func (b *BeeFs) Setchgtime(path string, tmsp fuse.Timespec) (errc int) {
 
 func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() error {
 	return func() error {
+		ctx := context.Background()
+		now := time.Now().UnixNano()
+
 		mtdtRdr, mtdtLen, err := f.metadata()
 		if err != nil {
 			return fmt.Errorf("failed getting metadata %w", err)
 		}
 		sp := splitter.NewSimpleSplitter(b.store, storage.ModePutUpload)
-		addr, err := sp.Split(context.Background(), mtdtRdr, mtdtLen, b.encrypt)
+		addr, err := sp.Split(ctx, mtdtRdr, mtdtLen, b.encrypt)
 		if err != nil {
 			return fmt.Errorf("failed splitter %w", err)
 		}
 		if !addr.Equal(mtdtRef) {
-			err = b.pb.Put(context.Background(), b.metadataKey(f.id), time.Now().UnixNano(), addr)
+			err = b.pb.Put(ctx, b.metadataKey(f.id), now, addr)
 			if err != nil {
 				return fmt.Errorf("failed publishing metadata %w", err)
+			}
+			for _, link := range f.links {
+				err = b.pb.Put(ctx, b.metadataKey(link), now, addr)
+				if err != nil {
+					return fmt.Errorf("failed publishing link metadata %s: %w", link, err)
+				}
 			}
 		}
 		dataAddr, err := f.data.Close()
@@ -685,9 +664,15 @@ func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() e
 			return fmt.Errorf("failed closing file %w", err)
 		}
 		if !dataAddr.Equal(dataRef) {
-			err = b.pb.Put(context.Background(), b.dataKey(f.id), time.Now().UnixNano(), addr)
+			err = b.pb.Put(ctx, b.dataKey(f.id), now, addr)
 			if err != nil {
 				return fmt.Errorf("failed publishing data %w", err)
+			}
+			for _, link := range f.links {
+				err = b.pb.Put(ctx, b.dataKey(link), now, addr)
+				if err != nil {
+					return fmt.Errorf("failed publishing link data %s: %w", link, err)
+				}
 			}
 		}
 		return nil
@@ -751,7 +736,13 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 		return nil
 	}
 
-	node = &fsNode{id: path, stat: md.Stat, xatr: md.Xatr, children: md.Children}
+	node = &fsNode{
+		id:       path,
+		stat:     md.Stat,
+		xatr:     md.Xatr,
+		children: md.Children,
+		links:    md.Links,
+	}
 
 	dataRef := swarm.ZeroAddress
 	if !node.isDir() {
