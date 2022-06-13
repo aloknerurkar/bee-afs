@@ -387,10 +387,13 @@ func (b *BeeFs) Open(path string, flags int) (errc int, fh uint64) {
 func (b *BeeFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 	defer b.synchronize()()
 
+	log.Debugf("getattr called %s %d", path, fh)
 	node := b.getNode(path, fh)
 	if nil == node {
+		log.Debugf("file not found %s", path)
 		return -fuse.ENOENT
 	}
+	log.Debug("filled stat")
 	*stat = node.stat
 	return 0
 }
@@ -880,6 +883,7 @@ func (b *BeeFs) getNode(path string, fh uint64) *fsNode {
 	nd := b.lookupNode(path)
 	if nd != nil && ^uint64(0) != fh {
 		b.openmap[fh] = nd
+		log.Debugf("opened file %s %d", path, fh)
 	}
 	return nd
 }

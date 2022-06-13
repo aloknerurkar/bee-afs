@@ -3,6 +3,7 @@ package lookuper
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,7 +14,10 @@ import (
 	"github.com/ethersphere/bee/pkg/feeds/factory"
 	"github.com/ethersphere/bee/pkg/soc"
 	"github.com/ethersphere/bee/pkg/swarm"
+	logger "github.com/ipfs/go-log/v2"
 )
+
+var log = logger.Logger("lookuper")
 
 type Lookuper interface {
 	Get(ctx context.Context, id string, version int64) (swarm.Address, error)
@@ -30,14 +34,28 @@ func New(store store.PutGetter, owner common.Address) Lookuper {
 }
 
 func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm.Address, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
+		}
+	}()
+	cctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+
+	log.Debug("get started")
+	defer log.Debug("get done")
+
 	lk, err := factory.New(l.store).NewLookup(feeds.Epoch, feeds.New([]byte(id), l.owner))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed creating lookuper %w", err)
 	}
 
-	ch, _, _, err := lk.At(context.Background(), time.Now().UnixNano(), l.hint(id))
+	ch, _, _, err := lk.At(cctx, version, l.hint(id))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed looking up key %w", err)
+	}
+	if ch == nil {
+		return swarm.ZeroAddress, errors.New("invalid chunk lookup")
 	}
 
 	ref, ts, err := parseFeedUpdate(ch)
