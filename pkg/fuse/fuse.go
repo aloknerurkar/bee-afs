@@ -3,8 +3,6 @@ package fs
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -15,13 +13,14 @@ import (
 	"sync"
 	"time"
 
+	bf "github.com/aloknerurkar/bee-afs/pkg/file"
+	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
+	"github.com/aloknerurkar/bee-afs/pkg/publisher"
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/billziss-gh/cgofuse/fuse"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethersphere/bee/pkg/feeds"
-	"github.com/ethersphere/bee/pkg/feeds/factory"
 	"github.com/ethersphere/bee/pkg/file/joiner"
-	"github.com/ethersphere/bee/pkg/soc"
+	"github.com/ethersphere/bee/pkg/file/splitter"
+	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
 	logger "github.com/ipfs/go-log/v2"
 )
@@ -29,10 +28,6 @@ import (
 func init() {
 	gob.Register(FsMetadata{})
 }
-
-const (
-	MetadataKey = "metadata"
-)
 
 var log = logger.Logger("fuse/beeFs")
 
@@ -64,31 +59,17 @@ func trace(start time.Time, errc *int, vals ...interface{}) {
 		time.Since(start).String(), args, *errc)
 }
 
-type FsNode interface {
-	Reference() swarm.Address
-	IsDir() bool
-	Metadata() string
-}
-
-func split(path string) []string {
-	return strings.Split(path, "/")
-}
-
 type fsNode struct {
 	id       string
 	stat     fuse.Stat_t
 	xatr     map[string][]byte
 	children []string
 	opencnt  int
+	data     *bf.BeeFile
+	commit   func() error
 }
 
-func (f *fsNode) Reference() swarm.Address {
-	if !f.IsDir() {
-	}
-	return swarm.ZeroAddress
-}
-
-func (f *fsNode) IsDir() bool {
+func (f *fsNode) isDir() bool {
 	if f.stat.Mode&fuse.S_IFDIR > 0 {
 		return true
 	}
@@ -96,7 +77,7 @@ func (f *fsNode) IsDir() bool {
 }
 
 func (f *fsNode) Close() error {
-	return nil
+	return f.commit()
 }
 
 func (f *fsNode) clone(newpath string) *fsNode {
@@ -109,7 +90,16 @@ type FsMetadata struct {
 	Children []string
 }
 
-func (f *fsNode) Metadata() string {
+type metadataReader struct {
+	bytes.Buffer
+}
+
+func (m *metadataReader) Close() error {
+	m.Reset()
+	return nil
+}
+
+func (f *fsNode) metadata() (io.ReadCloser, int64, error) {
 	md := FsMetadata{
 		Stat: f.stat,
 		Xatr: f.xatr,
@@ -117,48 +107,34 @@ func (f *fsNode) Metadata() string {
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(md)
 	if err != nil {
-		return ""
+		return nil, 0, err
 	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
+	return &metadataReader{buf}, int64(buf.Len()), nil
 }
 
-func fromMetadata(reader io.Reader) (*fsNode, error) {
+func fromMetadata(reader io.Reader) (FsMetadata, error) {
 	md := FsMetadata{}
 	err := gob.NewDecoder(reader).Decode(&md)
 	if err != nil {
-		return nil, fmt.Errorf("failed decoding blob %w", err)
+		return FsMetadata{}, fmt.Errorf("failed decoding blob %w", err)
 	}
-	return &fsNode{
-		stat:     md.Stat,
-		xatr:     md.Xatr,
-		children: md.Children,
-	}, nil
+	return md, nil
 }
 
 type BeeFs struct {
 	fuse.FileSystemBase
 	lock    sync.Mutex
 	ino     uint64
-	root    *fsNode
 	openmap map[uint64]*fsNode
 	pin     bool
 	encrypt bool
-
-	rootFeed   *feeds.Feed
-	owner      common.Address
-	lastUpdate int64
-	sig        []byte
-	store      store.PutGetter
-	id         string
+	store   store.PutGetter
+	id      string
+	lk      lookuper.Lookuper
+	pb      publisher.Publisher
 }
 
 type Option func(*BeeFs)
-
-// func WithReference(ref swarm.Address) Option {
-// 	return func(r *BeeFs) {
-// 		r.reference = ref
-// 	}
-// }
 
 func WithPin(val bool) Option {
 	return func(r *BeeFs) {
@@ -271,10 +247,10 @@ func (b *BeeFs) Readlink(path string) (errc int, target string) {
 		return -fuse.EINVAL, ""
 	}
 	linkBuf := make([]byte, 1024)
-	// n, err := node.data.ReadAt(linkBuf, 0)
-	// if err != nil {
-	// 	return -fuse.EIO, ""
-	// }
+	_, err := node.data.ReadAt(linkBuf, 0)
+	if err != nil {
+		return -fuse.EIO, ""
+	}
 	return 0, string(linkBuf)
 }
 
@@ -295,7 +271,7 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 		return -fuse.ENOENT
 	}
 
-	if oldnode.IsDir() && strings.Contains(newpath, filepath.Dir(oldpath)) {
+	if oldnode.isDir() && strings.Contains(newpath, filepath.Dir(oldpath)) {
 		// directory loop creation
 		return -fuse.EINVAL
 	}
@@ -311,7 +287,9 @@ func (b *BeeFs) Rename(oldpath string, newpath string) (errc int) {
 	if nil == newprnt {
 		return -fuse.ENOENT
 	}
-	newprnt.children = append(newprnt.children, filepath.Base(newpath))
+	if nil == newnode {
+		newprnt.children = append(newprnt.children, filepath.Base(newpath))
+	}
 	for idx, chld := range oldprnt.children {
 		if chld == filepath.Base(oldpath) {
 			oldprnt.children = append(oldprnt.children[:idx], oldprnt.children[idx+1:]...)
@@ -410,10 +388,10 @@ func (b *BeeFs) Truncate(path string, size int64, fh uint64) (errc int) {
 	if nil == node {
 		return -fuse.ENOENT
 	}
-	// err := node.data.Truncate(size)
-	// if err != nil {
-	// 	return -fuse.EIO
-	// }
+	err := node.data.Truncate(size)
+	if err != nil {
+		return -fuse.EIO
+	}
 	node.stat.Size = size
 	tmsp := fuse.Now()
 	node.stat.Ctim = tmsp
@@ -432,13 +410,13 @@ func (b *BeeFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	}
 	var err error
 	if cap(buff)-len(buff) > 1024 {
-		// dBuf := make([]byte, len(buff))
-		// n, err = node.data.ReadAt(dBuf, ofst)
-		// if err == nil {
-		// 	copy(buff, dBuf)
-		// }
+		dBuf := make([]byte, len(buff))
+		n, err = node.data.ReadAt(dBuf, ofst)
+		if err == nil {
+			copy(buff, dBuf)
+		}
 	} else {
-		// n, err = node.data.ReadAt(buff, ofst)
+		n, err = node.data.ReadAt(buff, ofst)
 	}
 	if err != nil {
 		log.Error("failed read", err)
@@ -460,11 +438,11 @@ func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	if endofst > node.stat.Size {
 		node.stat.Size = endofst
 	}
-	// var err error
-	// n, err = node.data.WriteAt(buff, ofst)
-	// if err != nil {
-	// 	return -fuse.EIO
-	// }
+	var err error
+	n, err = node.data.WriteAt(buff, ofst)
+	if err != nil {
+		return -fuse.EIO
+	}
 	tmsp := fuse.Now()
 	node.stat.Ctim = tmsp
 	node.stat.Mtim = tmsp
@@ -645,6 +623,37 @@ func (b *BeeFs) Setchgtime(path string, tmsp fuse.Timespec) (errc int) {
 	return 0
 }
 
+func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() error {
+	return func() error {
+		mtdtRdr, mtdtLen, err := f.metadata()
+		if err != nil {
+			return fmt.Errorf("failed getting metadata %w", err)
+		}
+		sp := splitter.NewSimpleSplitter(b.store, storage.ModePutUpload)
+		addr, err := sp.Split(context.Background(), mtdtRdr, mtdtLen, b.encrypt)
+		if err != nil {
+			return fmt.Errorf("failed splitter %w", err)
+		}
+		if !addr.Equal(mtdtRef) {
+			err = b.pb.Put(context.Background(), b.metadataKey(f.id), time.Now().UnixNano(), addr)
+			if err != nil {
+				return fmt.Errorf("failed publishing metadata %w", err)
+			}
+		}
+		dataAddr, err := f.data.Close()
+		if err != nil {
+			return fmt.Errorf("failed closing file %w", err)
+		}
+		if !dataAddr.Equal(dataRef) {
+			err = b.pb.Put(context.Background(), b.dataKey(f.id), time.Now().UnixNano(), addr)
+			if err != nil {
+				return fmt.Errorf("failed publishing data %w", err)
+			}
+		}
+		return nil
+	}
+}
+
 func (b *BeeFs) newNode(id string, dev uint64, ino uint64, mode uint32, uid uint32, gid uint32) *fsNode {
 	tmsp := fuse.Now()
 	f := &fsNode{
@@ -666,37 +675,25 @@ func (b *BeeFs) newNode(id string, dev uint64, ino uint64, mode uint32, uid uint
 		opencnt: 0,
 	}
 	if fuse.S_IFREG == f.stat.Mode&fuse.S_IFREG {
-		// f.data = bf.New(swarm.ZeroAddress, b.store, b.encrypt)
+		f.data = bf.New(swarm.ZeroAddress, b.store, b.encrypt)
 	}
+	f.commit = b.commitNodeFn(f, swarm.ZeroAddress, swarm.ZeroAddress)
 	return f
 }
 
-func (b *BeeFs) getMetadataLookuper(path string) (feeds.Lookup, error) {
-	lookupPath := fmt.Sprintf("%s/%s/mtdt", b.id, path)
-	nodeMetadataFeed := feeds.New([]byte(lookupPath), b.owner)
-
-	return factory.New(b.store).NewLookup(feeds.Epoch, nodeMetadataFeed)
+func (b *BeeFs) metadataKey(id string) string {
+	return fmt.Sprintf("%s/%s/mtdt", b.id, id)
 }
 
-func (b *BeeFs) getDataLookuper(path string) (feeds.Lookup, error) {
-	lookupPath := fmt.Sprintf("%s/%s/data", b.id, path)
-	nodeMetadataFeed := feeds.New([]byte(lookupPath), b.owner)
-
-	return factory.New(b.store).NewLookup(feeds.Epoch, nodeMetadataFeed)
+func (b *BeeFs) dataKey(id string) string {
+	return fmt.Sprintf("%s/%s/data", b.id, id)
 }
 
 func (b *BeeFs) lookupNode(path string) (node *fsNode) {
-	lookup, err := b.getMetadataLookuper(path)
-	if err != nil {
-		return nil
-	}
+	ctx := context.Background()
+	latest := time.Now().UnixNano()
 
-	ch, _, _, err := lookup.At(context.Background(), time.Now().Unix(), b.lastUpdate)
-	if err != nil {
-		return nil
-	}
-
-	ref, _, err := parseFeedUpdate(ch)
+	ref, err := b.lk.Get(ctx, b.metadataKey(path), latest)
 	if err != nil {
 		return nil
 	}
@@ -706,42 +703,22 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 		return nil
 	}
 
-	node, err = fromMetadata(reader)
+	md, err := fromMetadata(reader)
 	if err != nil {
 		return nil
 	}
 
-	if !node.IsDir() {
-		// dataLookup, err := b.getDataLookuper(path)
-		// if err != nil {
-		// 	return nil
-		// }
+	node = &fsNode{id: path, stat: md.Stat, xatr: md.Xatr, children: md.Children}
 
+	dataRef := swarm.ZeroAddress
+	if !node.isDir() {
+		dataRef, _ = b.lk.Get(ctx, b.dataKey(path), latest)
+		node.data = bf.New(dataRef, b.store, b.encrypt)
 	}
+
+	node.commit = b.commitNodeFn(node, ref, dataRef)
 
 	return
-}
-
-func parseFeedUpdate(ch swarm.Chunk) (swarm.Address, int64, error) {
-	s, err := soc.FromChunk(ch)
-	if err != nil {
-		return swarm.ZeroAddress, 0, fmt.Errorf("soc unmarshal: %w", err)
-
-	}
-
-	update := s.WrappedChunk().Data()
-	// split the timestamp and reference
-	// possible values right now:
-	// unencrypted ref: span+timestamp+ref => 8+8+32=48
-	// encrypted ref: span+timestamp+ref+decryptKey => 8+8+64=80
-	if len(update) != 48 && len(update) != 80 {
-		return swarm.ZeroAddress, 0, fmt.Errorf("invalid update")
-
-	}
-	ts := binary.BigEndian.Uint64(update[8:16])
-	ref := swarm.NewAddress(update[16:])
-	return ref, int64(ts), nil
-
 }
 
 func (b *BeeFs) makeNode(path string, mode uint32, dev uint64, data []byte) int {
@@ -759,12 +736,11 @@ func (b *BeeFs) makeNode(path string, mode uint32, dev uint64, data []byte) int 
 	uid, gid, _ := fuse.Getcontext()
 	node = b.newNode(path, dev, b.ino, mode, uid, gid)
 	if nil != data {
-		// node.data = bf.New(swarm.ZeroAddress, b.store, b.encrypt)
-		// n, err := node.data.Write(data)
-		// if err != nil {
-		// 	return -fuse.EIO
-		// }
-		// node.stat.Size = int64(n)
+		n, err := node.data.Write(data)
+		if err != nil {
+			return -fuse.EIO
+		}
+		node.stat.Size = int64(n)
 	}
 
 	if err := node.Close(); err != nil {
