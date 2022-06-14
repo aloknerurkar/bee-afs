@@ -154,11 +154,11 @@ func TestMultiDirWithFiles(t *testing.T) {
 		},
 		{
 			path: "dir3/file31",
-			size: 1024 * 1024 * 5,
+			size: 1024 * 1024,
 		},
 		{
 			path: "dir3/file32",
-			size: 1024 * 1024 * 10,
+			size: 1024 * 1024,
 		},
 		{
 			path: "dir3/file33",
@@ -174,11 +174,11 @@ func TestMultiDirWithFiles(t *testing.T) {
 		},
 		{
 			path: "dir2/dir4/file241",
-			size: 1024 * 1024 * 5,
+			size: 1024 * 1024,
 		},
 		{
 			path: "dir2/dir4/dir5/file2451",
-			size: 1024 * 1024 * 10,
+			size: 1024 * 1024,
 		},
 	}
 

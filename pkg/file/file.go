@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -241,7 +242,8 @@ func merge(writeOps []*writeOp) (merged []*writeOp) {
 				prev.tmsp = tmsp
 			} else {
 				if op.tmsp > prev.tmsp {
-					start, end := op.start-prev.start, op.end-op.start
+					fmt.Printf("op %v %v prev %v %v", op.start, op.end, prev.start, prev.end)
+					start, end := op.start-prev.start, op.end-prev.start
 					copy(prev.buf[start:end], op.buf)
 					prev.tmsp = op.tmsp
 				}
