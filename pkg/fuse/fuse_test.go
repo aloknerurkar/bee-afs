@@ -30,9 +30,7 @@ type testStorer struct {
 	mp map[string][]byte
 }
 
-func newTestFs(t *testing.T, st store.PutGetter) (*fs.BeeFs, string, func(), error) {
-	t.Helper()
-
+func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	if *logs {
 		logger.SetLogLevel("*", "Debug")
 	}
@@ -45,7 +43,7 @@ func newTestFs(t *testing.T, st store.PutGetter) (*fs.BeeFs, string, func(), err
 	signer := crypto.NewDefaultSigner(pk)
 	owner, err := signer.EthereumAddress()
 	if err != nil {
-		t.Fatal(err)
+		return nil, "", func() {}, err
 	}
 
 	lk := lookuper.New(st, owner)
@@ -81,7 +79,7 @@ func newTestFs(t *testing.T, st store.PutGetter) (*fs.BeeFs, string, func(), err
 
 func TestFileBasic(t *testing.T) {
 	st := mock.NewStorer()
-	_, mntDir, closer, err := newTestFs(t, st)
+	_, mntDir, closer, err := newTestFs(st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +181,7 @@ func TestMultiDirWithFiles(t *testing.T) {
 	}
 
 	st := mock.NewStorer()
-	_, mntDir, closer, err := newTestFs(t, st)
+	_, mntDir, closer, err := newTestFs(st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,38 +276,10 @@ func TestMultiDirWithFiles(t *testing.T) {
 		}
 	})
 
-	// t.Run("walk", func(t *testing.T) {
-	// 	walkMap := make(map[string]struct{})
-	// 	err := fsImpl.Walk(context.Background(), func(path string, nd fs.FsNode) (error, bool) {
-	// 		if path == string(os.PathSeparator) {
-	// 			return nil, false
-	// 		}
-	// 		if _, found := walkMap[path]; found {
-	// 			return errors.New("walked already seen path " + path), true
-	// 		}
-	// 		walkMap[path] = struct{}{}
-	// 		for _, v := range entries {
-	// 			if v.path == path {
-	// 				if nd.IsDir() != v.isDir {
-	// 					return errors.New("isDir flag wrong on " + path), true
-	// 				}
-	// 				break
-	// 			}
-	// 		}
-	// 		return nil, false
-	// 	})
-	// 	if err != nil {
-	// 		t.Fatal(err)
-	// 	}
-	// 	if len(walkMap) != len(entries) {
-	// 		t.Fatalf("incorrect no of entries walked exp: %d found: %d", len(entries), len(walkMap))
-	// 	}
-	// })
-
 	// t.Run("unmount and mount and verify", func(t *testing.T) {
 	// 	closer()
 	// 	time.Sleep(time.Second)
-	// 	fsImpl, mntDir, closer, err = newTestFs(st)
+	// 	_, mntDir, closer, err = newTestFs(st)
 	// 	if err != nil {
 	// 		t.Fatal(err)
 	// 	}

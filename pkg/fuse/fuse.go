@@ -148,14 +148,20 @@ func New(
 func (b *BeeFs) Init() {
 	defer b.synchronize()()
 
-	b.ino++
-	uid, gid, _ := fuse.Getcontext()
-	node := b.newNode("/", 0, b.ino, fuse.S_IFDIR|00777, uid, gid)
-	err := node.Close()
-	if err != nil {
-		panic(err)
+	rootNode := b.lookupNode("/")
+	if rootNode == nil {
+		b.ino++
+		uid, gid, _ := fuse.Getcontext()
+		node := b.newNode("/", 0, b.ino, fuse.S_IFDIR|00777, uid, gid)
+		err := node.Close()
+		if err != nil {
+			panic(err)
+		}
+		log.Infof("initialized new mount %s", b.id)
+	} else {
+		rootNode.Close()
+		log.Infof("mounting existing mount %s", b.id)
 	}
-	log.Infof("initialized new mount %s", b.id)
 }
 
 func (b *BeeFs) Destroy() {
