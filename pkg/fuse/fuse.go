@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,32 +29,8 @@ func init() {
 
 var log = logger.Logger("fuse/beeFs")
 
-func trace(start time.Time, errc *int, vals ...interface{}) {
-	pc, _, _, ok := runtime.Caller(1)
-	name := "<UNKNOWN>"
-	if ok {
-		fn := runtime.FuncForPC(pc)
-		name = fn.Name()
-	}
-	args := "("
-	for idx, v := range vals {
-		switch v.(type) {
-		case string:
-			args += v.(string)
-		case int:
-			args += strconv.Itoa(v.(int))
-		case int64:
-			args += strconv.FormatInt(v.(int64), 10)
-		case uint64:
-			args += strconv.FormatUint(v.(uint64), 10)
-		}
-		if idx != len(vals)-1 {
-			args += ", "
-		}
-	}
-	args += ")"
-	log.Debugf("%s took %s args: %s result: %d", name,
-		time.Since(start).String(), args, *errc)
+func isAllZeroes(addr swarm.Address) bool {
+	return swarm.NewAddress(make([]byte, 32)).Equal(addr)
 }
 
 type fsNode struct {
@@ -387,13 +361,10 @@ func (b *BeeFs) Open(path string, flags int) (errc int, fh uint64) {
 func (b *BeeFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 	defer b.synchronize()()
 
-	log.Debugf("getattr called %s %d", path, fh)
 	node := b.getNode(path, fh)
 	if nil == node {
-		log.Debugf("file not found %s", path)
 		return -fuse.ENOENT
 	}
-	log.Debug("filled stat")
 	*stat = node.stat
 	return 0
 }
@@ -641,7 +612,7 @@ func (b *BeeFs) Setchgtime(path string, tmsp fuse.Timespec) (errc int) {
 func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() error {
 	return func() error {
 		ctx := context.Background()
-		now := time.Now().UnixNano()
+		now := time.Now().Unix()
 
 		mtdtRdr, mtdtLen, err := f.metadata()
 		if err != nil {
@@ -671,16 +642,17 @@ func (b *BeeFs) commitNodeFn(f *fsNode, mtdtRef, dataRef swarm.Address) func() e
 				return fmt.Errorf("failed closing file %w", err)
 			}
 			if !dataAddr.Equal(dataRef) {
-				err = b.pb.Put(ctx, b.dataKey(f.id), now, addr)
+				err = b.pb.Put(ctx, b.dataKey(f.id), now, dataAddr)
 				if err != nil {
 					return fmt.Errorf("failed publishing data %w", err)
 				}
 				for _, link := range f.links {
-					err = b.pb.Put(ctx, b.dataKey(link), now, addr)
+					err = b.pb.Put(ctx, b.dataKey(link), now, dataAddr)
 					if err != nil {
 						return fmt.Errorf("failed publishing link data %s: %w", link, err)
 					}
 				}
+				log.Debugf("committed data %s: %s", b.dataKey(f.id), dataAddr.String())
 			}
 		}
 		return nil
@@ -726,15 +698,13 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 	log.Debugf("lookup req %s", path)
 
 	ctx := context.Background()
-	latest := time.Now().UnixNano()
+	latest := time.Now().Unix()
 
 	ref, err := b.lk.Get(ctx, b.metadataKey(path), latest)
 	if err != nil {
 		log.Warnf("failed getting key %s err: %v", b.metadataKey(path), err)
 		return nil
 	}
-
-	log.Debugf("got ref %s on lookup", ref.String())
 
 	reader, _, err := joiner.New(context.Background(), b.store, ref)
 	if err != nil {
@@ -759,12 +729,14 @@ func (b *BeeFs) lookupNode(path string) (node *fsNode) {
 	dataRef := swarm.ZeroAddress
 	if !node.isDir() {
 		dataRef, _ = b.lk.Get(ctx, b.dataKey(path), latest)
+		if isAllZeroes(dataRef) {
+			dataRef = swarm.ZeroAddress
+		}
 		node.data = bf.New(dataRef, b.store, b.encrypt)
 	}
 
 	node.commit = b.commitNodeFn(node, ref, dataRef)
 
-	log.Debugf("lookup result %+v", node)
 	return node
 }
 
@@ -842,7 +814,6 @@ func (b *BeeFs) removeNode(path string, dir bool) int {
 }
 
 func (b *BeeFs) openNode(path string, dir bool) (int, uint64) {
-	log.Debugf("openNode %s", path)
 	node := b.lookupNode(path)
 	if nil == node {
 		return -fuse.ENOENT, ^uint64(0)

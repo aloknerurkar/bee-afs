@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/ethereum/go-ethereum/common"
@@ -34,23 +33,12 @@ func New(store store.PutGetter, owner common.Address) Lookuper {
 }
 
 func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm.Address, error) {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println("Recovered in f", r)
-		}
-	}()
-	cctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-
-	log.Debug("get started")
-	defer log.Debug("get done")
-
 	lk, err := factory.New(l.store).NewLookup(feeds.Epoch, feeds.New([]byte(id), l.owner))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed creating lookuper %w", err)
 	}
 
-	ch, _, _, err := lk.At(cctx, version, l.hint(id))
+	ch, _, _, err := lk.At(ctx, version, l.hint(id))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed looking up key %w", err)
 	}
@@ -64,6 +52,7 @@ func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm
 	}
 
 	l.setHint(id, ts)
+	log.Debugf("lookup complete id %s version %d found %d ref %s", id, version, ts, ref.String())
 
 	return ref, nil
 }

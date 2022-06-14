@@ -10,7 +10,10 @@ import (
 	"github.com/ethersphere/bee/pkg/feeds/epochs"
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
+	logger "github.com/ipfs/go-log/v2"
 )
+
+var log = logger.Logger("lookuper")
 
 type Publisher interface {
 	Put(ctx context.Context, id string, version int64, ref swarm.Address) error
@@ -31,6 +34,8 @@ func (p *pubImpl) Put(ctx context.Context, id string, version int64, ref swarm.A
 	if err != nil {
 		return err
 	}
+
+	log.Debugf("updating id %s version %d ref %s", id, version, ref.String())
 
 	return upd.Update(ctx, version, ref.Bytes())
 }

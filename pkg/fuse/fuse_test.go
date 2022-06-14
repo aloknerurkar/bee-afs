@@ -92,30 +92,16 @@ func TestFileBasic(t *testing.T) {
 	content := []byte("hello world")
 	fn := filepath.Join(mntDir, "file1")
 
-	f, err := os.Create(fn)
-	if err != nil {
-		t.Fatalf("failed creating new file %s: %v", fn, err)
+	if err := os.WriteFile(fn, content, 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
-
-	n, err := f.Write(content)
-	if err != nil {
-		t.Fatalf("failed writing file %s: %v", fn, err)
-	}
-	if n != len(content) {
-		t.Fatal("invalid length of write")
-	}
-	err = f.Close()
-	if err != nil {
-		t.Fatalf("failed closing %v", err)
-	}
-
 	if got, err := os.ReadFile(fn); err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	} else if bytes.Compare(got, content) != 0 {
 		t.Fatalf("ReadFile: got %q, want %q", got, content)
 	}
 
-	f, err = os.Open(fn)
+	f, err := os.Open(fn)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
