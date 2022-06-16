@@ -1,0 +1,5 @@
+swarm-key: /home/bee/.bee/keys/swarm.key
+password: passw0rd
+api-host: "http://localhost"
+api-port: 1633
+postage-batch: "hello"
