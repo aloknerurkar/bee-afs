@@ -29,10 +29,11 @@ type BeeStore struct {
 	cancel    context.CancelFunc
 	opChan    chan putOp
 	wg        sync.WaitGroup
+	pin       bool
 }
 
 // NewBeeStore creates a new APIStore.
-func NewBeeStore(host string, port int, tls bool, batch string) (*BeeStore, error) {
+func NewBeeStore(host string, port int, tls, pin bool, batch string) (*BeeStore, error) {
 	scheme := "http"
 	if tls {
 		scheme += "s"
@@ -62,6 +63,7 @@ func NewBeeStore(host string, port int, tls bool, batch string) (*BeeStore, erro
 		batch:     batch,
 		cancel:    cancel,
 		opChan:    make(chan putOp),
+		pin:       pin,
 	}
 
 	err := b.putWorker(ctx)
@@ -81,6 +83,9 @@ func (b *BeeStore) putWorker(ctx context.Context) error {
 	reqHeader := http.Header{}
 	reqHeader.Set("Content-Type", "application/octet-stream")
 	reqHeader.Set("Swarm-Postage-Batch-Id", b.batch)
+	if b.pin {
+		reqHeader.Set("Swarm-Pin", "true")
+	}
 
 	dialer := websocket.Dialer{
 		ReadBufferSize:  swarm.ChunkSize,
@@ -156,7 +161,7 @@ func (b *BeeStore) putWorker(ctx context.Context) error {
 	return nil
 }
 
-func (b *BeeStore) Put(ctx context.Context, mode storage.ModePut, chs ...swarm.Chunk) (exist []bool, err error) {
+func (b *BeeStore) Put(ctx context.Context, _ storage.ModePut, chs ...swarm.Chunk) (exist []bool, err error) {
 	for _, ch := range chs {
 		errc := make(chan error, 1)
 		select {
@@ -177,7 +182,7 @@ func (b *BeeStore) Put(ctx context.Context, mode storage.ModePut, chs ...swarm.C
 	return make([]bool, len(chs)), nil
 }
 
-func (b *BeeStore) Get(ctx context.Context, mode storage.ModeGet, address swarm.Address) (ch swarm.Chunk, err error) {
+func (b *BeeStore) Get(ctx context.Context, _ storage.ModeGet, address swarm.Address) (ch swarm.Chunk, err error) {
 	addressHex := address.String()
 	url := strings.Join([]string{b.baseUrl, addressHex}, "/")
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

@@ -1,4 +1,4 @@
-swarm-key: /home/bee/.bee/keys/swarm.key
+swarm-key: /Users/aloknerurkar/queenbee/data/keys/swarm.key
 password: passw0rd
 api-host: "http://localhost"
 api-port: 1633

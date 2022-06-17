@@ -12,10 +12,12 @@ import (
 	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
 	"github.com/aloknerurkar/bee-afs/pkg/mounts"
 	"github.com/aloknerurkar/bee-afs/pkg/publisher"
+	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
 	"github.com/billziss-gh/cgofuse/fuse"
 	"github.com/ethersphere/bee/pkg/crypto"
 	filekeystore "github.com/ethersphere/bee/pkg/keystore/file"
+	"github.com/ethersphere/bee/pkg/storage/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -30,6 +32,7 @@ func main() {
 			EnvVars: []string{"BEEAFS_CONFIG"},
 		},
 		&cli.BoolFlag{Name: "inmem", Usage: "use inmem storage for testing"},
+		&cli.BoolFlag{Name: "debug", Usage: "enable all logs"},
 		altsrc.NewStringFlag(&cli.StringFlag{Name: "swarm-key", Usage: "path to swarm-key file"}),
 		altsrc.NewStringFlag(&cli.StringFlag{Name: "password", Usage: "password for swarm-key file"}),
 		altsrc.NewStringFlag(&cli.StringFlag{Name: "api-host", DefaultText: "http://localhost"}),
@@ -87,6 +90,7 @@ func main() {
 						Flags:  confFlags,
 						Action: func(c *cli.Context) error {
 							if c.NArg() != 2 {
+								fmt.Println(c.Args().Get(0))
 								return errors.New("incorrect arguments")
 							}
 
@@ -94,6 +98,7 @@ func main() {
 							if err != nil {
 								return err
 							}
+							defer st.Close()
 
 							lk, pb, err := getLookuperPublisher(c, st)
 							if err != nil {
@@ -150,6 +155,7 @@ func main() {
 								return errors.New("fuse mount stopped")
 							case <-interruptChannel:
 								fmt.Println("Received stop signal...")
+								srv.Unmount()
 							}
 
 							return nil
@@ -175,7 +181,7 @@ func getSigner(c *cli.Context) (crypto.Signer, error) {
 	return crypto.NewDefaultSigner(pk), nil
 }
 
-func getLookuperPublisher(c *cli.Context, b *beestore.BeeStore) (lookuper.Lookuper, publisher.Publisher, error) {
+func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper, publisher.Publisher, error) {
 	signer, err := getSigner(c)
 	if err != nil {
 		return nil, nil, err
@@ -187,11 +193,15 @@ func getLookuperPublisher(c *cli.Context, b *beestore.BeeStore) (lookuper.Lookup
 	return lookuper.New(b, owner), publisher.New(b, signer), nil
 }
 
-func getBeeStore(c *cli.Context) (*beestore.BeeStore, error) {
+func getBeeStore(c *cli.Context) (store.PutGetter, error) {
+	if c.Bool("inmem") {
+		return mock.NewStorer(), nil
+	}
 	return beestore.NewBeeStore(
 		c.String("api-host"),
 		c.Int("api-port"),
 		false,
+		c.Bool("pin"),
 		c.String("postage-batch"),
 	)
 }
