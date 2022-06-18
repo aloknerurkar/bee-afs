@@ -194,10 +194,7 @@ func (b *BeeStore) Get(ctx context.Context, _ storage.ModeGet, address swarm.Add
 		return nil, fmt.Errorf("failed executing http req %w", err)
 	}
 	if res.StatusCode != http.StatusOK {
-		if res.StatusCode == http.StatusNotFound {
-			return nil, storage.ErrNotFound
-		}
-		return nil, fmt.Errorf("chunk %s not found", addressHex)
+		return nil, fmt.Errorf("chunk %s not found %w", addressHex, storage.ErrNotFound)
 	}
 	defer res.Body.Close()
 	chunkData, err := ioutil.ReadAll(res.Body)

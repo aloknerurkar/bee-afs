@@ -3,7 +3,7 @@ package fs
 import (
 	"bytes"
 	"context"
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -23,10 +23,6 @@ import (
 	"github.com/ethersphere/bee/pkg/swarm"
 	logger "github.com/ipfs/go-log/v2"
 )
-
-func init() {
-	gob.Register(FsMetadata{})
-}
 
 var log = logger.Logger("fuse/beeFs")
 
@@ -68,7 +64,7 @@ type FsMetadata struct {
 }
 
 type metadataReader struct {
-	bytes.Buffer
+	*bytes.Buffer
 }
 
 func (m *metadataReader) Close() error {
@@ -83,19 +79,22 @@ func (f *fsNode) metadata() (io.ReadCloser, int64, error) {
 		Children: f.children,
 		Links:    f.links,
 	}
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(md)
+	data, err := json.Marshal(md)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("failed marshaling json %w", err)
 	}
-	return &metadataReader{buf}, int64(buf.Len()), nil
+	return &metadataReader{bytes.NewBuffer(data)}, int64(len(data)), nil
 }
 
 func fromMetadata(reader io.Reader) (FsMetadata, error) {
 	md := FsMetadata{}
-	err := gob.NewDecoder(reader).Decode(&md)
+	buf, err := io.ReadAll(reader)
 	if err != nil {
-		return FsMetadata{}, fmt.Errorf("failed decoding blob %w", err)
+		return FsMetadata{}, fmt.Errorf("failed reading metadata %w", err)
+	}
+	err = json.Unmarshal(buf, &md)
+	if err != nil {
+		return FsMetadata{}, fmt.Errorf("failed decoding metadata %w", err)
 	}
 	return md, nil
 }
