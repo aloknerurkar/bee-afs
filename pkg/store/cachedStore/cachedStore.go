@@ -8,7 +8,10 @@ import (
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
 	lru "github.com/hashicorp/golang-lru"
+	logger "github.com/ipfs/go-log/v2"
 )
+
+var log = logger.Logger("cachedStore")
 
 type cachedStore struct {
 	store.PutGetter
@@ -29,9 +32,11 @@ func (c *cachedStore) Get(ctx context.Context, md storage.ModeGet, address swarm
 		ch, err = c.PutGetter.Get(ctx, md, address)
 		if err == nil {
 			_ = c.cache.Add(address.ByteString(), ch)
+			log.Debugf("adding chunk to cache %s", ch.Address().String())
 		}
 	} else {
 		ch = chEntry.(swarm.Chunk)
+		log.Debugf("found chunk in cache %s", ch.Address().String())
 	}
 	return
 }
@@ -41,6 +46,7 @@ func (c *cachedStore) Put(ctx context.Context, md storage.ModePut, chs ...swarm.
 	if err == nil {
 		for _, ch := range chs {
 			_ = c.cache.Add(ch.Address().ByteString(), ch)
+			log.Debugf("adding chunk to cache %s", ch.Address().String())
 		}
 	}
 	return

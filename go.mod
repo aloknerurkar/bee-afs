@@ -18,6 +18,8 @@ require github.com/gorilla/websocket v1.5.0
 
 require github.com/urfave/cli/v2 v2.8.1
 
+require github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
+
 require (
 	github.com/BurntSushi/toml v1.1.0 // indirect
 	github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible // indirect
@@ -27,6 +29,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.1 // indirect
+	github.com/ethersphere/go-price-oracle-abi v0.1.0 // indirect
 	github.com/ethersphere/go-storage-incentives-abi v0.3.0 // indirect
 	github.com/ethersphere/go-sw3-abi v0.4.0 // indirect
 	github.com/ethersphere/langos v1.0.0 // indirect
@@ -39,7 +42,6 @@ require (
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d // indirect
 	github.com/ipfs/go-cid v0.0.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect

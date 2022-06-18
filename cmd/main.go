@@ -19,7 +19,9 @@ import (
 	"github.com/aloknerurkar/bee-afs/pkg/store/cachedStore"
 	"github.com/billziss-gh/cgofuse/fuse"
 	"github.com/ethersphere/bee/pkg/crypto"
+	"github.com/ethersphere/bee/pkg/keystore"
 	filekeystore "github.com/ethersphere/bee/pkg/keystore/file"
+	memkeystore "github.com/ethersphere/bee/pkg/keystore/mem"
 	"github.com/ethersphere/bee/pkg/storage/mock"
 	logger "github.com/ipfs/go-log/v2"
 	"github.com/urfave/cli/v2"
@@ -122,7 +124,8 @@ func main() {
 								}
 							}
 							if !found {
-								err := mnts.Put(c.Context, append(mntList, c.Args().Get(0)))
+								mntList = append(mntList, c.Args().Get(0))
+								err := mnts.Put(c.Context, mntList)
 								if err != nil {
 									return fmt.Errorf("failed adding new mount %w", err)
 								}
@@ -179,7 +182,12 @@ func main() {
 }
 
 func getSigner(c *cli.Context) (crypto.Signer, error) {
-	keystore := filekeystore.New(filepath.Dir(c.String("swarm-key")))
+	var keystore keystore.Service
+	if c.String("swarm-key") == "" {
+		keystore = memkeystore.New()
+	} else {
+		keystore = filekeystore.New(filepath.Dir(c.String("swarm-key")))
+	}
 	pk, _, err := keystore.Key("swarm", c.String("password"))
 	if err != nil {
 		return nil, fmt.Errorf("failed reading swarm key %w", err)
