@@ -4,11 +4,9 @@ go 1.17
 
 require (
 	github.com/billziss-gh/cgofuse v1.5.0
-	github.com/ethersphere/bee v1.6.1
+	github.com/ethersphere/bee v1.6.2-rc1.0.20220618113832-e387679d60ee
 	github.com/ipfs/go-log/v2 v2.5.1
 )
-
-replace github.com/ethersphere/bee v1.6.1 => ../bee
 
 require (
 	github.com/ethereum/go-ethereum v1.10.16
