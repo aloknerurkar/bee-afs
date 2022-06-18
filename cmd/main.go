@@ -7,17 +7,21 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/aloknerurkar/bee-afs/pkg/cached"
 	fs "github.com/aloknerurkar/bee-afs/pkg/fuse"
 	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
 	"github.com/aloknerurkar/bee-afs/pkg/mounts"
 	"github.com/aloknerurkar/bee-afs/pkg/publisher"
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
+	"github.com/aloknerurkar/bee-afs/pkg/store/cachedStore"
 	"github.com/billziss-gh/cgofuse/fuse"
 	"github.com/ethersphere/bee/pkg/crypto"
 	filekeystore "github.com/ethersphere/bee/pkg/keystore/file"
 	"github.com/ethersphere/bee/pkg/storage/mock"
+	logger "github.com/ipfs/go-log/v2"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
@@ -139,9 +143,11 @@ func main() {
 
 							srv := fuse.NewFileSystemHost(fsImpl)
 							srv.SetCapReaddirPlus(true)
+
 							var fuseArgs []string
 							if c.Bool("debug") {
 								fuseArgs = []string{"-d"}
+								logger.SetLogLevel("*", "debug")
 							}
 							stopped := make(chan struct{})
 							go func() {
@@ -190,18 +196,26 @@ func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper,
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
 	}
-	return lookuper.New(b, owner), publisher.New(b, signer), nil
+	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 5*time.Second)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)
+	}
+	return cachedLkPb, cachedLkPb, nil
 }
 
 func getBeeStore(c *cli.Context) (store.PutGetter, error) {
 	if c.Bool("inmem") {
 		return mock.NewStorer(), nil
 	}
-	return beestore.NewBeeStore(
+	bStore, err := beestore.NewBeeStore(
 		c.String("api-host"),
 		c.Int("api-port"),
 		false,
 		c.Bool("pin"),
 		c.String("postage-batch"),
 	)
+	if err != nil {
+		return nil, err
+	}
+	return cachedStore.New(bStore)
 }

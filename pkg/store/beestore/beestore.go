@@ -194,6 +194,9 @@ func (b *BeeStore) Get(ctx context.Context, _ storage.ModeGet, address swarm.Add
 		return nil, fmt.Errorf("failed executing http req %w", err)
 	}
 	if res.StatusCode != http.StatusOK {
+		if res.StatusCode == http.StatusNotFound {
+			return nil, storage.ErrNotFound
+		}
 		return nil, fmt.Errorf("chunk %s not found", addressHex)
 	}
 	defer res.Body.Close()

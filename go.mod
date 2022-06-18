@@ -8,6 +8,8 @@ require (
 	github.com/ipfs/go-log/v2 v2.5.1
 )
 
+replace github.com/ethersphere/bee v1.6.1 => ../bee
+
 require (
 	github.com/ethereum/go-ethereum v1.10.16
 	go.uber.org/atomic v1.9.0
@@ -39,6 +41,7 @@ require (
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d // indirect
 	github.com/ipfs/go-cid v0.0.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect
