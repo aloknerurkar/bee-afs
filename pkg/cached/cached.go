@@ -49,7 +49,9 @@ func (c *cachedLookuperPublisher) Get(ctx context.Context, id string, version in
 		res := cRef.(cachedResult)
 		return res.ref, res.err
 	}
-	return c.get(ctx, id, version)
+	ref, err := c.get(ctx, id, version)
+	_ = c.cached.Add(id, cachedResult{ref: ref, err: err, ts: time.Now().Unix()})
+	return ref, err
 }
 
 func (c *cachedLookuperPublisher) get(ctx context.Context, id string, version int64) (swarm.Address, error) {
