@@ -100,6 +100,10 @@ func main() {
 								return errors.New("incorrect arguments")
 							}
 
+							if c.Bool("debug") {
+								logger.SetLogLevel("*", "debug")
+							}
+
 							st, err := getBeeStore(c)
 							if err != nil {
 								return err
@@ -150,7 +154,6 @@ func main() {
 							var fuseArgs []string
 							if c.Bool("debug") {
 								fuseArgs = []string{"-d"}
-								logger.SetLogLevel("*", "debug")
 							}
 							stopped := make(chan struct{})
 							go func() {
@@ -204,7 +207,7 @@ func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper,
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
 	}
-	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 15*time.Second)
+	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 5*time.Second)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)
 	}
