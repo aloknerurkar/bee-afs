@@ -12,6 +12,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/aloknerurkar/bee-afs/pkg/cached"
 	fs "github.com/aloknerurkar/bee-afs/pkg/fuse"
 	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
 	"github.com/aloknerurkar/bee-afs/pkg/publisher"
@@ -48,8 +49,12 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 
 	lk := lookuper.New(st, owner)
 	pb := publisher.New(st, signer)
+	cLkPb, err := cached.New(lk, pb, time.Second)
+	if err != nil {
+		return nil, "", func() {}, err
+	}
 
-	fsImpl, err := fs.New(st, lk, pb)
+	fsImpl, err := fs.New(st, cLkPb, cLkPb)
 	if err != nil {
 		return nil, "", func() {}, err
 	}

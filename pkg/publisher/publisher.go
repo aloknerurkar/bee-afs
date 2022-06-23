@@ -7,7 +7,7 @@ import (
 
 	"github.com/ethersphere/bee/pkg/crypto"
 	"github.com/ethersphere/bee/pkg/feeds"
-	"github.com/ethersphere/bee/pkg/feeds/epochs"
+	"github.com/ethersphere/bee/pkg/feeds/sequence"
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
 	logger "github.com/ipfs/go-log/v2"
@@ -44,7 +44,7 @@ func (p *pubImpl) updater(id string) (feeds.Updater, error) {
 	upd, found := p.updaterMap.Load(id)
 	if !found {
 		var err error
-		upd, err = epochs.NewUpdater(p.putter, p.signer, []byte(id))
+		upd, err = sequence.NewUpdater(p.putter, p.signer, []byte(id))
 		if err != nil {
 			return nil, fmt.Errorf("failed creating new updater %w", err)
 		}

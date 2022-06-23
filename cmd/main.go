@@ -204,7 +204,7 @@ func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper,
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
 	}
-	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 5*time.Second)
+	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 15*time.Second)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)
 	}
