@@ -3,7 +3,6 @@ package file
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -108,7 +107,6 @@ func (i *inmemWrappedReader) ReadAt(buf []byte, off int64) (n int, err error) {
 	if len(patches) == 1 &&
 		(len(patches[0].buf) == len(buf) || (off+int64(len(patches[0].buf)) == i.f.size.Load())) {
 		copy(buf, patches[0].buf)
-		fmt.Println("read from inmem", off)
 		return len(patches[0].buf), nil
 	}
 	if i.f.rdr != nil {
