@@ -46,7 +46,7 @@ func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm
 		return swarm.ZeroAddress, errors.New("invalid chunk lookup")
 	}
 
-	ref, ts, err := parseFeedUpdate(ch)
+	ref, ts, err := ParseFeedUpdate(ch)
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed parsing feed update %w", err)
 	}
@@ -73,7 +73,7 @@ func (l *lookuperImpl) setHint(id string, index feeds.Index) {
 	}
 }
 
-func parseFeedUpdate(ch swarm.Chunk) (swarm.Address, int64, error) {
+func ParseFeedUpdate(ch swarm.Chunk) (swarm.Address, int64, error) {
 	s, err := soc.FromChunk(ch)
 	if err != nil {
 		return swarm.ZeroAddress, 0, fmt.Errorf("soc unmarshal: %w", err)
