@@ -38,7 +38,7 @@ func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm
 		return swarm.ZeroAddress, fmt.Errorf("failed creating lookuper %w", err)
 	}
 
-	ch, _, _, err := lk.At(ctx, version, l.hint(id))
+	ch, current, _, err := lk.At(ctx, version, l.hint(id))
 	if err != nil {
 		return swarm.ZeroAddress, fmt.Errorf("failed looking up key %w", err)
 	}
@@ -51,7 +51,7 @@ func (l *lookuperImpl) Get(ctx context.Context, id string, version int64) (swarm
 		return swarm.ZeroAddress, fmt.Errorf("failed parsing feed update %w", err)
 	}
 
-	l.setHint(id, ts)
+	l.setHint(id, current)
 	log.Debugf("lookup complete id %s version %d found %d ref %s", id, version, ts, ref.String())
 
 	return ref, nil
@@ -65,8 +65,12 @@ func (l *lookuperImpl) hint(id string) int64 {
 	return h.(int64)
 }
 
-func (l *lookuperImpl) setHint(id string, ts int64) {
-	l.hintMap.Store(id, ts)
+func (l *lookuperImpl) setHint(id string, index feeds.Index) {
+	buf, err := index.MarshalBinary()
+	if err == nil {
+		hint := binary.BigEndian.Uint64(buf)
+		l.hintMap.Store(id, int64(hint))
+	}
 }
 
 func parseFeedUpdate(ch swarm.Chunk) (swarm.Address, int64, error) {
