@@ -46,23 +46,25 @@ func main() {
 		Usage: "Provides filesystem abstraction for Swarm decentralized storage",
 		Commands: []*cli.Command{
 			{
+				Name:    "create",
+				Aliases: []string{"c"},
+				Usage:   "Create a new FUSE Filesystem mount on Swarm",
+				Flags:   confFlags,
+				Action:  doCreate,
+			},
+			{
+				Name:    "list",
+				Aliases: []string{"l"},
+				Usage:   "List mounts configured on Swarm",
+				Flags:   confFlags,
+				Action:  doMountList,
+			},
+			{
 				Name:    "mount",
 				Aliases: []string{"m"},
-				Usage:   "Mount a FUSE Filesystem on Swarm",
-				Subcommands: []*cli.Command{
-					{
-						Name:   "list",
-						Before: altsrc.InitInputSourceWithContext(confFlags, altsrc.NewYamlSourceFromFlagFunc("config")),
-						Flags:  confFlags,
-						Action: doMountList,
-					},
-					{
-						Name:   "create",
-						Before: altsrc.InitInputSourceWithContext(confFlags, altsrc.NewYamlSourceFromFlagFunc("config")),
-						Flags:  confFlags,
-						Action: doMountCreate,
-					},
-				},
+				Usage:   "Mount a FUSE Filesystem on Swarm locally",
+				Flags:   confFlags,
+				Action:  doMount,
 			},
 		},
 	}
@@ -96,7 +98,15 @@ func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper,
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
 	}
-	cachedLkPb, err := cached.New(lookuper.New(b, owner), publisher.New(b, signer), 5*time.Second)
+	return lookuper.New(b, owner), publisher.New(b, signer), nil
+}
+
+func getCachedLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper, publisher.Publisher, error) {
+	lk, pb, err := getLookuperPublisher(c, b)
+	if err != nil {
+		return nil, nil, err
+	}
+	cachedLkPb, err := cached.New(lk, pb, 5*time.Second)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)
 	}
@@ -117,5 +127,13 @@ func getBeeStore(c *cli.Context) (store.PutGetter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cachedStore.New(bStore)
+	return bStore, nil
+}
+
+func getCachedBeeStore(c *cli.Context) (store.PutGetter, error) {
+	st, err := getBeeStore(c)
+	if err != nil {
+		return nil, err
+	}
+	return cachedStore.New(st)
 }

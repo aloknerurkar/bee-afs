@@ -3,25 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 
-	fs "github.com/aloknerurkar/bee-afs/pkg/fuse"
 	"github.com/aloknerurkar/bee-afs/pkg/mounts"
-	"github.com/billziss-gh/cgofuse/fuse"
-	logger "github.com/ipfs/go-log/v2"
 	"github.com/urfave/cli/v2"
 )
 
-func doMountCreate(c *cli.Context) error {
-	if c.NArg() != 2 {
-		fmt.Println(c.Args().Get(0))
+func doCreate(c *cli.Context) error {
+	if c.NArg() != 1 {
 		return errors.New("incorrect arguments")
-	}
-
-	if c.Bool("debug") {
-		logger.SetLogLevel("*", "debug")
 	}
 
 	st, err := getBeeStore(c)
@@ -47,47 +36,15 @@ func doMountCreate(c *cli.Context) error {
 			found = true
 		}
 	}
-	if !found {
-		mntList = append(mntList, c.Args().Get(0))
-		err := mnts.Put(c.Context, mntList)
-		if err != nil {
-			return fmt.Errorf("failed adding new mount %w", err)
-		}
+	if found {
+		return fmt.Errorf("mount %s already exists", c.Args().Get(0))
 	}
 
-	opts := []fs.Option{fs.WithNamespace(c.Args().Get(0))}
-	if c.Bool("encrypt") {
-		opts = append(opts, fs.WithEncryption(true))
-	}
+	mntList = append(mntList, c.Args().Get(0))
 
-	fsImpl, err := fs.New(st, lk, pb, opts...)
+	err = mnts.Put(c.Context, mntList)
 	if err != nil {
-		return fmt.Errorf("failed creating new fs %w", err)
-	}
-
-	interruptChannel := make(chan os.Signal, 1)
-	signal.Notify(interruptChannel, syscall.SIGINT, syscall.SIGTERM)
-
-	srv := fuse.NewFileSystemHost(fsImpl)
-	srv.SetCapReaddirPlus(true)
-
-	var fuseArgs []string
-	if c.Bool("debug") {
-		fuseArgs = []string{"-d"}
-	}
-	stopped := make(chan struct{})
-	go func() {
-		if !srv.Mount(c.Args().Get(1), fuseArgs) {
-			close(stopped)
-		}
-	}()
-
-	select {
-	case <-stopped:
-		return errors.New("fuse mount stopped")
-	case <-interruptChannel:
-		fmt.Println("Received stop signal...")
-		srv.Unmount()
+		return fmt.Errorf("failed updating mount list %w", err)
 	}
 
 	return nil
