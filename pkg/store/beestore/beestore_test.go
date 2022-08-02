@@ -35,34 +35,57 @@ func TestStoreCorrectness(t *testing.T) {
 		t.Fatal(err)
 	}
 	bId := swarm.NewAddress(postagetesting.MustNewID()).String()
-	st, err := beestore.NewBeeStore(host, port, false, false, bId)
-	if err != nil {
-		t.Fatal("failed creating new beestore")
-	}
 
-	t.Cleanup(func() {
-		err := st.Close()
+	t.Run("read-write", func(t *testing.T) {
+		st, err := beestore.NewBeeStore(host, port, false, false, bId, false)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal("failed creating new beestore")
+		}
+
+		t.Cleanup(func() {
+			err := st.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+
+		ctx := context.Background()
+
+		for i := 0; i < 50; i++ {
+			ch := testingc.GenerateTestRandomChunk()
+			_, err := st.Put(ctx, storage.ModePutUpload, ch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			chResult, err := st.Get(ctx, storage.ModeGetRequest, ch.Address())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ch.Equal(chResult) {
+				t.Fatal("chunk mismatch")
+			}
 		}
 	})
 
-	ctx := context.Background()
+	t.Run("read-only", func(t *testing.T) {
+		st, err := beestore.NewBeeStore(host, port, false, false, bId, true)
+		if err != nil {
+			t.Fatal("failed creating new beestore")
+		}
 
-	for i := 0; i < 50; i++ {
+		t.Cleanup(func() {
+			err := st.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+
 		ch := testingc.GenerateTestRandomChunk()
-		_, err := st.Put(ctx, storage.ModePutUpload, ch)
-		if err != nil {
-			t.Fatal(err)
+		_, err = st.Put(context.TODO(), storage.ModePutUpload, ch)
+		if err == nil {
+			t.Fatal("expected error while putting")
 		}
-		chResult, err := st.Get(ctx, storage.ModeGetRequest, ch.Address())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !ch.Equal(chResult) {
-			t.Fatal("chunk mismatch")
-		}
-	}
+	})
 }
 
 // newTestServer creates an http server to serve the bee http api endpoints.

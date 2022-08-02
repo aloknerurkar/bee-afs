@@ -4,43 +4,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/aloknerurkar/bee-afs/pkg/cached"
 	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
+	"github.com/aloknerurkar/bee-afs/pkg/mounts"
 	"github.com/aloknerurkar/bee-afs/pkg/publisher"
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
-	"github.com/aloknerurkar/bee-afs/pkg/store/cachedStore"
 	"github.com/ethersphere/bee/pkg/crypto"
 	"github.com/ethersphere/bee/pkg/keystore"
 	filekeystore "github.com/ethersphere/bee/pkg/keystore/file"
 	memkeystore "github.com/ethersphere/bee/pkg/keystore/mem"
-	"github.com/ethersphere/bee/pkg/storage/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/urfave/cli/v2/altsrc"
 )
 
+var commonFlags = []cli.Flag{
+	&cli.StringFlag{
+		Name:    "config",
+		Aliases: []string{"c"},
+		Usage:   "Load configuration from `FILE`",
+		EnvVars: []string{"BEEAFS_CONFIG"},
+	},
+	altsrc.NewStringFlag(&cli.StringFlag{Name: "swarm-key", Usage: "path to swarm-key file"}),
+	altsrc.NewStringFlag(&cli.StringFlag{Name: "password", Usage: "password for swarm-key file"}),
+	altsrc.NewStringFlag(&cli.StringFlag{Name: "api-host", DefaultText: "http://localhost"}),
+	altsrc.NewIntFlag(&cli.IntFlag{Name: "api-port", DefaultText: "1633"}),
+	altsrc.NewStringFlag(&cli.StringFlag{Name: "root-batch", Usage: "batch to use for user metadata"}),
+}
+
 func main() {
-
-	confFlags := []cli.Flag{
-		&cli.StringFlag{
-			Name:    "config",
-			Aliases: []string{"c"},
-			Usage:   "Load configuration from `FILE`",
-			EnvVars: []string{"BEEAFS_CONFIG"},
-		},
-		&cli.BoolFlag{Name: "inmem", Usage: "use inmem storage for testing"},
-		&cli.BoolFlag{Name: "debug", Usage: "enable all logs"},
-		altsrc.NewStringFlag(&cli.StringFlag{Name: "swarm-key", Usage: "path to swarm-key file"}),
-		altsrc.NewStringFlag(&cli.StringFlag{Name: "password", Usage: "password for swarm-key file"}),
-		altsrc.NewStringFlag(&cli.StringFlag{Name: "api-host", DefaultText: "http://localhost"}),
-		altsrc.NewIntFlag(&cli.IntFlag{Name: "api-port", DefaultText: "1633"}),
-		altsrc.NewStringFlag(&cli.StringFlag{Name: "postage-batch"}),
-		altsrc.NewBoolFlag(&cli.BoolFlag{Name: "pin"}),
-		altsrc.NewBoolFlag(&cli.BoolFlag{Name: "encrypt"}),
-	}
-
 	app := &cli.App{
 		Name:  "bee-afs",
 		Usage: "Provides filesystem abstraction for Swarm decentralized storage",
@@ -49,21 +41,24 @@ func main() {
 				Name:    "create",
 				Aliases: []string{"c"},
 				Usage:   "Create a new FUSE Filesystem mount on Swarm",
-				Flags:   confFlags,
+				Before:  altsrc.InitInputSourceWithContext(commonFlags, altsrc.NewYamlSourceFromFlagFunc("config")),
+				Flags:   append(commonFlags, createFlags...),
 				Action:  doCreate,
 			},
 			{
 				Name:    "list",
 				Aliases: []string{"l"},
 				Usage:   "List mounts configured on Swarm",
-				Flags:   confFlags,
+				Before:  altsrc.InitInputSourceWithContext(commonFlags, altsrc.NewYamlSourceFromFlagFunc("config")),
+				Flags:   commonFlags,
 				Action:  doMountList,
 			},
 			{
 				Name:    "mount",
 				Aliases: []string{"m"},
 				Usage:   "Mount a FUSE Filesystem on Swarm locally",
-				Flags:   confFlags,
+				Before:  altsrc.InitInputSourceWithContext(commonFlags, altsrc.NewYamlSourceFromFlagFunc("config")),
+				Flags:   append(commonFlags, mountFlags...),
 				Action:  doMount,
 			},
 		},
@@ -101,28 +96,14 @@ func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper,
 	return lookuper.New(b, owner), publisher.New(b, signer), nil
 }
 
-func getCachedLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper, publisher.Publisher, error) {
-	lk, pb, err := getLookuperPublisher(c, b)
-	if err != nil {
-		return nil, nil, err
-	}
-	cachedLkPb, err := cached.New(lk, pb, 5*time.Second)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)
-	}
-	return cachedLkPb, cachedLkPb, nil
-}
-
-func getBeeStore(c *cli.Context) (store.PutGetter, error) {
-	if c.Bool("inmem") {
-		return mock.NewStorer(), nil
-	}
+func getMetadataBeeStore(c *cli.Context, readOnly bool) (store.PutGetter, error) {
 	bStore, err := beestore.NewBeeStore(
 		c.String("api-host"),
 		c.Int("api-port"),
 		false,
-		c.Bool("pin"),
-		c.String("postage-batch"),
+		true,
+		c.String("root-batch"),
+		readOnly,
 	)
 	if err != nil {
 		return nil, err
@@ -130,10 +111,20 @@ func getBeeStore(c *cli.Context) (store.PutGetter, error) {
 	return bStore, nil
 }
 
-func getCachedBeeStore(c *cli.Context) (store.PutGetter, error) {
-	st, err := getBeeStore(c)
+func getMounts(c *cli.Context, readOnly bool) (mounts.UserMounts, func(), error) {
+	st, err := getMetadataBeeStore(c, false)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
-	return cachedStore.New(st)
+
+	lk, pb, err := getLookuperPublisher(c, st)
+	if err != nil {
+		return nil, func() {}, err
+	}
+
+	if readOnly {
+		return mounts.NewReadOnly(lk, st), func() { st.Close() }, nil
+	}
+
+	return mounts.New(lk, pb, st), func() { st.Close() }, nil
 }
