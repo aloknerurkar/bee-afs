@@ -54,7 +54,7 @@ func doCreate(c *cli.Context) error {
 		return fmt.Errorf("failed updating mount list %w", err)
 	}
 
-	fmt.Println("Successfully created new mount %s", c.Args().Get(0))
+	fmt.Printf("Successfully created new mount %s\n", c.Args().Get(0))
 
 	return nil
 }
