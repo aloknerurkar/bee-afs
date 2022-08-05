@@ -112,7 +112,7 @@ func getMetadataBeeStore(c *cli.Context, readOnly bool) (store.PutGetter, error)
 }
 
 func getMounts(c *cli.Context, readOnly bool) (mounts.UserMounts, func(), error) {
-	st, err := getMetadataBeeStore(c, false)
+	st, err := getMetadataBeeStore(c, readOnly)
 	if err != nil {
 		return nil, func() {}, err
 	}

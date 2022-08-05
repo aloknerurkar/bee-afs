@@ -37,12 +37,14 @@ func doMount(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	defer done()
 
 	mntList, err := mnts.Get(c.Context)
 	if err != nil {
+		done()
 		return fmt.Errorf("failed getting mounts for user %w", err)
 	}
+
+	done()
 
 	found := false
 	foundIdx := 0
