@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
 	"github.com/aloknerurkar/bee-afs/pkg/store/cachedStore"
+	"github.com/aloknerurkar/bee-afs/pkg/store/feedstore"
 	"github.com/billziss-gh/cgofuse/fuse"
 	logger "github.com/ipfs/go-log/v2"
 	"github.com/urfave/cli/v2"
@@ -77,7 +79,7 @@ func doMount(c *cli.Context) error {
 		return err
 	}
 
-	lk, pb, err := getCachedLookuperPublisher(c, cStore)
+	lk, pb, err := getCachedLookuperPublisher(c, cStore, mntList.Mnts[foundIdx].Batch)
 	if err != nil {
 		return err
 	}
@@ -120,11 +122,31 @@ func doMount(c *cli.Context) error {
 	return nil
 }
 
-func getCachedLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper, publisher.Publisher, error) {
-	lk, pb, err := getLookuperPublisher(c, b)
+func getCachedLookuperPublisher(c *cli.Context, b store.PutGetter, batch string) (lookuper.Lookuper, publisher.Publisher, error) {
+	signer, err := getSigner(c)
 	if err != nil {
 		return nil, nil, err
 	}
+	owner, err := signer.EthereumAddress()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
+	}
+
+	fStore, err := feedstore.NewFeedStore(
+		c.String("api-host"),
+		c.Int("api-port"),
+		false,
+		true,
+		batch,
+		hex.EncodeToString(owner.Bytes()),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed creating feedstore %w", err)
+	}
+
+	lk := lookuper.New(fStore, owner)
+	pb := publisher.New(fStore, signer)
+
 	cachedLkPb, err := cached.New(lk, pb, 5*time.Second)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed creating cached lookup and publisher %w", err)

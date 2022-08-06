@@ -35,6 +35,7 @@ func doMountList(c *cli.Context) error {
 	for _, m := range mntList.Mnts {
 		t.AddLine(m.Name, time.Unix(m.Created, 0).String(), m.Batch, m.Encrypt, m.Pin)
 	}
+	t.Print()
 
 	return nil
 }

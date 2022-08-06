@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,8 +9,8 @@ import (
 	"github.com/aloknerurkar/bee-afs/pkg/lookuper"
 	"github.com/aloknerurkar/bee-afs/pkg/mounts"
 	"github.com/aloknerurkar/bee-afs/pkg/publisher"
-	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
+	"github.com/aloknerurkar/bee-afs/pkg/store/feedstore"
 	"github.com/ethersphere/bee/pkg/crypto"
 	"github.com/ethersphere/bee/pkg/keystore"
 	filekeystore "github.com/ethersphere/bee/pkg/keystore/file"
@@ -84,19 +85,28 @@ func getSigner(c *cli.Context) (crypto.Signer, error) {
 	return crypto.NewDefaultSigner(pk), nil
 }
 
-func getLookuperPublisher(c *cli.Context, b store.PutGetter) (lookuper.Lookuper, publisher.Publisher, error) {
+func getMounts(c *cli.Context, readOnly bool) (mounts.UserMounts, func(), error) {
 	signer, err := getSigner(c)
 	if err != nil {
-		return nil, nil, err
+		return nil, func() {}, err
 	}
 	owner, err := signer.EthereumAddress()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed getting owner eth address %w", err)
+		return nil, func() {}, fmt.Errorf("failed getting owner eth address %w", err)
 	}
-	return lookuper.New(b, owner), publisher.New(b, signer), nil
-}
 
-func getMetadataBeeStore(c *cli.Context, readOnly bool) (store.PutGetter, error) {
+	fStore, err := feedstore.NewFeedStore(
+		c.String("api-host"),
+		c.Int("api-port"),
+		false,
+		true,
+		c.String("root-batch"),
+		hex.EncodeToString(owner.Bytes()),
+	)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("failed creating feedstore %w", err)
+	}
+
 	bStore, err := beestore.NewBeeStore(
 		c.String("api-host"),
 		c.Int("api-port"),
@@ -106,25 +116,8 @@ func getMetadataBeeStore(c *cli.Context, readOnly bool) (store.PutGetter, error)
 		readOnly,
 	)
 	if err != nil {
-		return nil, err
-	}
-	return bStore, nil
-}
-
-func getMounts(c *cli.Context, readOnly bool) (mounts.UserMounts, func(), error) {
-	st, err := getMetadataBeeStore(c, readOnly)
-	if err != nil {
-		return nil, func() {}, err
+		return nil, func() {}, fmt.Errorf("failed creating beestore %w", err)
 	}
 
-	lk, pb, err := getLookuperPublisher(c, st)
-	if err != nil {
-		return nil, func() {}, err
-	}
-
-	if readOnly {
-		return mounts.NewReadOnly(lk, st), func() { st.Close() }, nil
-	}
-
-	return mounts.New(lk, pb, st), func() { st.Close() }, nil
+	return mounts.New(lookuper.New(fStore, owner), publisher.New(fStore, signer), bStore), func() { bStore.Close() }, nil
 }

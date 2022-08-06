@@ -51,10 +51,6 @@ func New(lk lookuper.Lookuper, pb publisher.Publisher, st store.PutGetter) UserM
 	return &userMountsImpl{lk, pb, st}
 }
 
-func NewReadOnly(lk lookuper.Lookuper, st store.PutGetter) UserMounts {
-	return &userMountsImpl{lk: lk, st: st}
-}
-
 func (u *userMountsImpl) Get(ctx context.Context) (Mounts, error) {
 	ref, err := u.lk.Get(ctx, userMounts, time.Now().Unix())
 	if err != nil || isAllZeroes(ref) {
