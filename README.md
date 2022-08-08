@@ -5,7 +5,7 @@ AFS stands for Active File System, which means this filesystem implementation ca
 Every time the file is changed, it is synced with the Swarm network and updates are sent for it on the network using Feeds which can be used
 to get the latest version of the file by other clients.
 
-A postage batch can be configured per mount point.
+A postage batch can be configured per mount point. Optionally user can choose to encrypt the contents of the mount.
 
 `bee-afs` uses [billziss-gh/cgofuse](https://github.com/billziss-gh/cgofuse). This was chosen as it is supported on all the
 platforms (Windows included! Phew!)
@@ -14,49 +14,25 @@ The FUSE implementation is based on the in-memory filesystem implementation insi
 stores files using `bee-file (pkg/file)` instead of in-memory. This stores the writes in-memory till the file is `closed` or `synced` manually
 and written in the format used by `bee`.
 
-NOTE: This project was built as part of a hackathon. So not everything is tested. Please use at your own risk. Any issues or PRs are welcome.
-
-`bee-afs` is packaged as a CLI application with just 2 commands. Users can create mounts or list their existing mounts. The flags can be provided
+`bee-afs` is packaged as a CLI application. Users can create mounts or list their existing mounts. The flags can be provided
 using a config file or on the command-line.
 
 ```
+❯ ./bee-afs -h
 NAME:
-   bee-afs mount create - 
+   bee-afs - Provides filesystem abstraction for Swarm decentralized storage
 
 USAGE:
-   bee-afs mount create [command options] [arguments...]
+   bee-afs [global options] command [command options] [arguments...]
 
-OPTIONS:
-   --api-host value        (default: http://localhost)
-   --api-port value        (default: 1633)
-   --config FILE, -c FILE  Load configuration from FILE [$BEEAFS_CONFIG]
-   --debug                 enable all logs (default: false)
-   --encrypt               (default: false)
-   --inmem                 use inmem storage for testing (default: false)
-   --password value        password for swarm-key file
-   --pin                   (default: false)
-   --postage-batch value   
-   --swarm-key value       path to swarm-key file
-```
+COMMANDS:
+   create, c  Create a new FUSE Filesystem mount on Swarm
+   list, l    List mounts configured on Swarm
+   mount, m   Mount a FUSE Filesystem on Swarm locally
+   help, h    Shows a list of commands or help for one command
 
-```
-NAME:
-   bee-afs mount list - 
-
-USAGE:
-   bee-afs mount list [command options] [arguments...]
-
-OPTIONS:
-   --api-host value        (default: http://localhost)
-   --api-port value        (default: 1633)
-   --config FILE, -c FILE  Load configuration from FILE [$BEEAFS_CONFIG]
-   --debug                 enable all logs (default: false)
-   --encrypt               (default: false)
-   --inmem                 use inmem storage for testing (default: false)
-   --password value        password for swarm-key file
-   --pin                   (default: false)
-   --postage-batch value   
-   --swarm-key value       path to swarm-key file
+GLOBAL OPTIONS:
+   --help, -h  show help (default: false)
 ```
 
 ## Quickstart
@@ -75,34 +51,38 @@ OPTIONS:
   curl -X POST http://localhost:1635/stamps/{amount}/{depth}
   ```
 
-- Create a configuration file. A basic config would look like this.
+- Create a configuration file. A basic config would look like this. The config contains the common configuration required for all commands. The config can be provided using an environment variable `BEEAFS_CONFIG`.
    ```
    # if key and password is not provided we generate a dummy one. This will change on each restart so no data would be retrievable as all the
    # data is tied to users private key. This could be useful for testing.
    
    # swarm-key: <PATH TO KEY FILE>
    # password: <PASSWORD>                                                                                                                                               
-   api-host: "localhost"                                                                                                                                            
-   api-port: 1633                                                                                                                                                   
-   postage-batch: <BATCH CREATED ABOVE>                                                                              
+   api-host: "localhost"                                                                                                                                    api-port: 1633                                                                                                                                            root-batch: <BATCH CREATED ABOVE>                                                                              
    ```
-  
+   
+- Create a new mount
+  ```
+  ./bee-afs create --config <PATH TO CONFIG> --batch <BATCH TO USE FOR THIS MOUNT> <UNIQUE NAME FOR MOUNT>
+  ```
+- List you mounts
+  ```
+  ./bee-afs list --config <PATH TO CONFIG>
+  ```
 - Mount a directory. This will create the fuse mount and make it active. The program will not return, in order to stop it, you can use `Ctrl-C`.
   ```
-  ./bee-fs mount create <UNIQUE NAME FOR MOUNT> <PATH TO DIRECTORY ON MACHINE> --config <PATH TO CONFIG>
+  ./bee-afs mount --config <PATH TO CONFIG> <UNIQUE NAME FOR MOUNT> <PATH TO DIRECTORY ON MACHINE>
   ```
+
 
 ## Design
 `bee-afs` uses the concept of feeds. To read more about feeds please refer [the book of swarm](https://www.ethswarm.org/The-Book-of-Swarm.pdf). Feeds are
-useful to perform versioning of a mutable resource. We use the epoch based indexing scheme here. The epoch based indexing scheme can be used to post
-version updates in the form of epochs. This allows us to get the latest updates to an item or even go back in time and construct the filesystem for that
+useful to perform versioning of a mutable resource. This allows us to get the latest updates to an item or even go back in time and construct the filesystem for that
 epoch. This way, we can store the filesystem along with all the historical data in the swarm network. Data is deduped at the chunk level, so only chunks
 which are unique are stored again.
 
-When user configures a mount, he has to name it. Each item in the FS (directory/file) is represented as a feed. For eg.
-```
-./bee-afs mount create [command options] <MOUNT NAME> <PATH TO DIRECTORY>
-```
+When user configures a mount, he has to name it. Each item in the FS (directory/file) is represented as a feed.
+
 For a directory there will be only 1 feed which is the metadata feed. For files, we will have metadata and data feed. The latest update in the feed
 points to the latest state of the file/directory. They topics for the feed are created as follows:
 
