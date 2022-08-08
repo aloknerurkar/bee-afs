@@ -29,8 +29,19 @@ type Reader interface {
 	io.ReadSeeker
 }
 
+func isZeroAddress(ref swarm.Address) bool {
+	if ref.Equal(swarm.ZeroAddress) {
+		return true
+	}
+	zeroAddr := make([]byte, 32)
+	if swarm.NewAddress(zeroAddr).Equal(ref) {
+		return true
+	}
+	return false
+}
+
 func New(addr swarm.Address, store store.PutGetter, encrypt bool) *BeeFile {
-	synced := atomic.NewBool(!addr.Equal(swarm.ZeroAddress))
+	synced := atomic.NewBool(!isZeroAddress(addr))
 	return &BeeFile{
 		store:     store,
 		encrypt:   encrypt,
@@ -64,7 +75,7 @@ func (f *BeeFile) synchronize() func() {
 }
 
 func (f *BeeFile) reader() (io.ReaderAt, error) {
-	if !f.rdrUseful.Load() && !f.reference.Equal(swarm.ZeroAddress) {
+	if !f.rdrUseful.Load() && !isZeroAddress(f.reference) {
 		// use singleflight
 		_, err, _ := f.sf.Do("create reader", func() (res interface{}, err error) {
 			f.rdr, _, err = joiner.New(context.Background(), f.store, f.reference)
@@ -115,7 +126,7 @@ func (i *inmemWrappedReader) getPatches(start, end int64) (patches []*patch) {
 	defer i.f.synchronize()()
 
 	for _, v := range i.f.writesInFlight {
-		if start > v.end {
+		if start >= v.end {
 			continue
 		}
 		if end < v.start {
@@ -270,6 +281,11 @@ func (f *BeeFile) Sync() error {
 	return nil
 }
 
+func (f *BeeFile) Truncate(sz int64) error {
+	f.size.Store(sz)
+	return nil
+}
+
 func (f *BeeFile) Close() (swarm.Address, error) {
 	if !f.synced.Load() {
 		err := f.Sync()
@@ -292,10 +308,5 @@ func (r *readCloser) Read(buf []byte) (n int, err error) {
 }
 
 func (r *readCloser) Close() error {
-	return nil
-}
-
-func (f *BeeFile) Truncate(sz int64) error {
-	f.size.Store(sz)
 	return nil
 }

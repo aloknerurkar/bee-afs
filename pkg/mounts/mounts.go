@@ -20,9 +20,21 @@ import (
 
 const userMounts string = "userMounts"
 
+type MountInfo struct {
+	Name    string
+	Batch   string
+	Encrypt bool
+	Pin     bool
+	Created int64
+}
+
+type Mounts struct {
+	Mnts []MountInfo
+}
+
 type UserMounts interface {
-	Get(ctx context.Context) ([]string, error)
-	Put(ctx context.Context, mnts []string) error
+	Get(ctx context.Context) (Mounts, error)
+	Put(ctx context.Context, mnts Mounts) error
 }
 
 func isAllZeroes(addr swarm.Address) bool {
@@ -39,24 +51,24 @@ func New(lk lookuper.Lookuper, pb publisher.Publisher, st store.PutGetter) UserM
 	return &userMountsImpl{lk, pb, st}
 }
 
-func (u *userMountsImpl) Get(ctx context.Context) ([]string, error) {
+func (u *userMountsImpl) Get(ctx context.Context) (Mounts, error) {
 	ref, err := u.lk.Get(ctx, userMounts, time.Now().Unix())
 	if err != nil || isAllZeroes(ref) {
 		// return empty for now
-		return []string{}, nil
+		return Mounts{}, nil
 	}
 	reader, _, err := joiner.New(ctx, u.st, ref)
 	if err != nil {
-		return nil, fmt.Errorf("failed creating reader %w", err)
+		return Mounts{}, fmt.Errorf("failed creating reader %w", err)
 	}
 	buf, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %w", err)
+		return Mounts{}, fmt.Errorf("failed to read %w", err)
 	}
-	mntList := []string{}
+	mntList := Mounts{}
 	err = json.Unmarshal(buf, &mntList)
 	if err != nil {
-		return nil, fmt.Errorf("failed unmarshaling data %w", err)
+		return Mounts{}, fmt.Errorf("failed unmarshaling data %w", err)
 	}
 	return mntList, nil
 }
@@ -70,8 +82,12 @@ func (m *mountsReader) Close() error {
 	return nil
 }
 
-func (u *userMountsImpl) Put(ctx context.Context, mnts []string) error {
-	if len(mnts) == 0 {
+func (u *userMountsImpl) Put(ctx context.Context, mnts Mounts) error {
+	if u.pb == nil {
+		return errors.New("publisher not configured")
+	}
+
+	if len(mnts.Mnts) == 0 {
 		return errors.New("mount list empty")
 	}
 

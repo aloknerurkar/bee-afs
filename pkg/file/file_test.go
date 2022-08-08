@@ -2,8 +2,11 @@ package file_test
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"math/rand"
 	"testing"
+	"testing/iotest"
 
 	"github.com/aloknerurkar/bee-afs/pkg/file"
 	"github.com/ethersphere/bee/pkg/storage/mock"
@@ -13,28 +16,32 @@ import (
 func TestFileBasic(t *testing.T) {
 	st := mock.NewStorer()
 
-	runTests := func(t *testing.T, f *file.BeeFile, testBuf []byte) {
+	runTests := func(t *testing.T, f *file.BeeFile, testBufs [][]byte) {
 		t.Run("write", func(t *testing.T) {
-			n, err := f.Write(testBuf)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if n != len(testBuf) {
-				t.Fatalf("invalid length of write exp: %d found: %d", len(testBuf), n)
+			for idx := range testBufs {
+				n, err := f.Write(testBufs[idx])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n != len(testBufs[idx]) {
+					t.Fatalf("invalid length of write exp: %d found: %d", len(testBufs[idx]), n)
+				}
 			}
 		})
 
 		t.Run("read", func(t *testing.T) {
-			newBuf := make([]byte, len(testBuf))
-			n, err := f.Read(newBuf)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if n != len(newBuf) {
-				t.Fatalf("invalid length of read exp: %d found: %d", len(testBuf), n)
-			}
-			if bytes.Compare(newBuf, testBuf) != 0 {
-				t.Fatal("read bytes not equal")
+			for idx := range testBufs {
+				newBuf := make([]byte, len(testBufs[idx]))
+				n, err := f.Read(newBuf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n != len(newBuf) {
+					t.Fatalf("invalid length of read exp: %d found: %d", len(testBufs[idx]), n)
+				}
+				if bytes.Compare(newBuf, testBufs[idx]) != 0 {
+					t.Fatal("read bytes not equal")
+				}
 			}
 		})
 
@@ -57,21 +64,34 @@ func TestFileBasic(t *testing.T) {
 		})
 
 		t.Run("read from reference", func(t *testing.T) {
-			f = file.New(ref, st, false)
+			fc := file.New(ref, st, false)
+			var completeData []byte
+			for _, v := range testBufs {
+				completeData = append(completeData[:], v[:]...)
+			}
+			readData := make([]byte, len(completeData))
 
-			newBuf := make([]byte, len(testBuf))
-			n, err := f.Read(newBuf)
-			if err != nil {
-				t.Fatal(err)
+			// read predefined lengths. Use odd size to simulate last read
+			// with < expected size
+			newBuf := make([]byte, 1000)
+			off := 0
+			for {
+				n, err := fc.Read(newBuf)
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				copy(readData[off:off+n], newBuf)
+				off += n
 			}
-			if n != len(newBuf) {
-				t.Fatalf("invalid length of read exp: %d found: %d", len(testBuf), n)
-			}
-			if bytes.Compare(newBuf, testBuf) != 0 {
+
+			if bytes.Compare(readData, completeData) != 0 {
 				t.Fatal("read bytes not equal")
 			}
 
-			ref2, err := f.Close()
+			ref2, err := fc.Close()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,14 +103,23 @@ func TestFileBasic(t *testing.T) {
 
 	t.Run("small file", func(t *testing.T) {
 		f := file.New(swarm.ZeroAddress, st, false)
-		testBuf := []byte("hello world")
-		runTests(t, f, testBuf)
+		testBufs := [][]byte{
+			[]byte("hello world\n"),
+			[]byte("this is a small file example\n"),
+			[]byte("thanks"),
+		}
+		runTests(t, f, testBufs)
 	})
 	t.Run("big file", func(t *testing.T) {
 		f := file.New(swarm.ZeroAddress, st, false)
-		testBuf := make([]byte, 1024*1024)
-		rand.Read(testBuf)
-		runTests(t, f, testBuf)
+		var testBufs [][]byte
+		// 5 1MB chunks
+		for i := 0; i < 5; i++ {
+			seg := make([]byte, 1024*1024)
+			rand.Read(seg)
+			testBufs = append(testBufs, seg)
+		}
+		runTests(t, f, testBufs)
 	})
 }
 
@@ -195,4 +224,33 @@ func TestFileHybrid(t *testing.T) {
 			t.Fatal("read bytes not equal")
 		}
 	})
+}
+
+func TestFileReader(t *testing.T) {
+	st := mock.NewStorer()
+	f := file.New(swarm.ZeroAddress, st, false)
+
+	data := make([]byte, 1024*1024)
+	rand.Read(data)
+
+	for off := 0; off < 1024*1024; off += 1024 {
+		n, err := f.Write(data[off : off+1024])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1024 {
+			t.Fatalf("incorrect write expected 1024 found %d", n)
+		}
+	}
+
+	// Test reader after writing inmem
+	iotest.TestReader(f, data)
+
+	err := f.Sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test after new reader initialized after sync
+	iotest.TestReader(f, data)
 }

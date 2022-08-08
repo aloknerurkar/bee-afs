@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aloknerurkar/bee-afs/pkg/mounts"
 	"github.com/ethersphere/bee/pkg/storage/mock"
@@ -46,12 +47,34 @@ func TestMounts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(mntList) != 0 {
-			t.Fatal("invalid no of mountsi:", len(mntList))
+		if len(mntList.Mnts) != 0 {
+			t.Fatal("invalid no of mountsi:", len(mntList.Mnts))
 		}
 	})
 	t.Run("create some mounts", func(t *testing.T) {
-		err := mnts.Put(context.TODO(), []string{"a", "b", "c"})
+		err := mnts.Put(context.TODO(), mounts.Mounts{
+			Mnts: []mounts.MountInfo{
+				{
+					Name:    "a",
+					Batch:   "b1",
+					Encrypt: false,
+					Pin:     true,
+					Created: time.Now().Unix(),
+				},
+				{
+					Name:    "b",
+					Batch:   "b2",
+					Encrypt: true,
+					Pin:     false,
+					Created: time.Now().Unix(),
+				},
+				{
+					Name:    "c",
+					Batch:   "b3",
+					Created: time.Now().Unix(),
+				},
+			},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,18 +82,18 @@ func TestMounts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(mntList) != 3 {
-			t.Fatal("invalid no of mounts:", len(mntList))
+		if len(mntList.Mnts) != 3 {
+			t.Fatal("invalid no of mounts:", len(mntList.Mnts))
 		}
 		foundA, foundB, foundC := false, false, false
-		for _, m := range mntList {
-			if m == "a" {
+		for _, m := range mntList.Mnts {
+			if m.Name == "a" {
 				foundA = true
 			}
-			if m == "b" {
+			if m.Name == "b" {
 				foundB = true
 			}
-			if m == "c" {
+			if m.Name == "c" {
 				foundC = true
 			}
 		}
@@ -79,20 +102,29 @@ func TestMounts(t *testing.T) {
 		}
 	})
 	t.Run("add mount", func(t *testing.T) {
-		err := mnts.Put(context.TODO(), []string{"a", "b", "c", "testlargename"})
+		mntList1, err := mnts.Get(context.TODO())
 		if err != nil {
 			t.Fatal(err)
 		}
-		mntList, err := mnts.Get(context.TODO())
+		mntList1.Mnts = append(mntList1.Mnts, mounts.MountInfo{
+			Name:    "testrandomname",
+			Batch:   "b4",
+			Created: time.Now().Unix(),
+		})
+		err = mnts.Put(context.TODO(), mntList1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(mntList) != 4 {
-			t.Fatal("invalid no of mounts:", len(mntList))
+		mntList2, err := mnts.Get(context.TODO())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mntList2.Mnts) != 4 {
+			t.Fatal("invalid no of mounts:", len(mntList2.Mnts))
 		}
 		found := false
-		for _, m := range mntList {
-			if m == "testlargename" {
+		for _, m := range mntList2.Mnts {
+			if m.Name == "testrandomname" {
 				found = true
 				break
 			}

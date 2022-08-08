@@ -4,12 +4,12 @@ go 1.17
 
 require (
 	github.com/billziss-gh/cgofuse v1.5.0
-	github.com/ethersphere/bee v1.6.2-rc1.0.20220618113832-e387679d60ee
+	github.com/ethersphere/bee v1.7.0
 	github.com/ipfs/go-log/v2 v2.5.1
 )
 
 require (
-	github.com/ethereum/go-ethereum v1.10.16
+	github.com/ethereum/go-ethereum v1.10.18
 	go.uber.org/atomic v1.9.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 )
@@ -24,11 +24,14 @@ require (
 	github.com/BurntSushi/toml v1.1.0 // indirect
 	github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/btcsuite/btcd v0.22.0-beta // indirect
+	github.com/btcsuite/btcd v0.22.1 // indirect
+	github.com/btcsuite/btcd/btcec/v2 v2.2.0 // indirect
 	github.com/casbin/casbin/v2 v2.35.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
+	github.com/cheynewallace/tabby v1.1.1 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/ethersphere/go-price-oracle-abi v0.1.0 // indirect
 	github.com/ethersphere/go-storage-incentives-abi v0.3.0 // indirect
 	github.com/ethersphere/go-sw3-abi v0.4.0 // indirect

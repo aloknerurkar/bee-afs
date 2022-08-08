@@ -2,5 +2,4 @@ swarm-key: /Users/aloknerurkar/queenbee/data/keys/swarm.key
 password: passw0rd
 api-host: "localhost"
 api-port: 1633
-# postage-batch: "14f6ff9234fb1d49f79202957d080dabfc2b23d48db25c0a3753f7f167c688e6"
-postage-batch: "d4e3f2b1ef300c8e0841d2b724add884c54cbf22c62129eff02bc4b810d7582b"
+root-batch: "946e30f4cd40329bf7439e8870b0a899afd5892e856bfe2333a3c0ba700e2bb4"

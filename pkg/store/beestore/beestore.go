@@ -23,17 +23,17 @@ var successWsMsg = []byte{}
 type BeeStore struct {
 	Client    *http.Client
 	baseUrl   string
-	tagUrl    string
 	streamUrl string
 	batch     string
 	cancel    context.CancelFunc
 	opChan    chan putOp
 	wg        sync.WaitGroup
 	pin       bool
+	readOnly  bool
 }
 
 // NewBeeStore creates a new APIStore.
-func NewBeeStore(host string, port int, tls, pin bool, batch string) (*BeeStore, error) {
+func NewBeeStore(host string, port int, tls, pin bool, batch string, readOnly bool) (*BeeStore, error) {
 	scheme := "http"
 	if tls {
 		scheme += "s"
@@ -42,11 +42,6 @@ func NewBeeStore(host string, port int, tls, pin bool, batch string) (*BeeStore,
 		Host:   fmt.Sprintf("%s:%d", host, port),
 		Scheme: scheme,
 		Path:   "chunks",
-	}
-	t := &url.URL{
-		Host:   fmt.Sprintf("%s:%d", host, port),
-		Scheme: scheme,
-		Path:   "tags",
 	}
 	st := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", host, port),
@@ -58,17 +53,19 @@ func NewBeeStore(host string, port int, tls, pin bool, batch string) (*BeeStore,
 	b := &BeeStore{
 		Client:    http.DefaultClient,
 		baseUrl:   u.String(),
-		tagUrl:    t.String(),
 		streamUrl: st.String(),
 		batch:     batch,
 		cancel:    cancel,
 		opChan:    make(chan putOp),
 		pin:       pin,
+		readOnly:  readOnly,
 	}
 
-	err := b.putWorker(ctx)
-	if err != nil {
-		return nil, err
+	if !readOnly {
+		err := b.putWorker(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return b, nil
@@ -162,6 +159,9 @@ func (b *BeeStore) putWorker(ctx context.Context) error {
 }
 
 func (b *BeeStore) Put(ctx context.Context, _ storage.ModePut, chs ...swarm.Chunk) (exist []bool, err error) {
+	if b.readOnly {
+		return nil, errors.New("read-only mode")
+	}
 	for _, ch := range chs {
 		errc := make(chan error, 1)
 		select {
@@ -193,10 +193,10 @@ func (b *BeeStore) Get(ctx context.Context, _ storage.ModeGet, address swarm.Add
 	if err != nil {
 		return nil, fmt.Errorf("failed executing http req %w", err)
 	}
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("chunk %s not found %w", addressHex, storage.ErrNotFound)
 	}
-	defer res.Body.Close()
 	chunkData, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading chunk body %w", err)

@@ -1,15 +1,16 @@
-package beestore_test
+package feedstore_test
 
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"io/ioutil"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"testing"
 
-	"github.com/aloknerurkar/bee-afs/pkg/store/beestore"
+	"github.com/aloknerurkar/bee-afs/pkg/store/feedstore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethersphere/bee/pkg/api"
 	"github.com/ethersphere/bee/pkg/crypto"
@@ -17,6 +18,7 @@ import (
 	mockbatchstore "github.com/ethersphere/bee/pkg/postage/batchstore/mock"
 	mockpost "github.com/ethersphere/bee/pkg/postage/mock"
 	postagetesting "github.com/ethersphere/bee/pkg/postage/testing"
+	soctesting "github.com/ethersphere/bee/pkg/soc/testing"
 	statestore "github.com/ethersphere/bee/pkg/statestore/mock"
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/storage/mock"
@@ -35,57 +37,35 @@ func TestStoreCorrectness(t *testing.T) {
 		t.Fatal(err)
 	}
 	bId := swarm.NewAddress(postagetesting.MustNewID()).String()
+	sch := soctesting.GenerateMockSOC(t, []byte("dummy"))
 
-	t.Run("read-write", func(t *testing.T) {
-		st, err := beestore.NewBeeStore(host, port, false, false, bId, false)
+	st, err := feedstore.NewFeedStore(host, port, false, false, bId, hex.EncodeToString(sch.Owner))
+	if err != nil {
+		t.Fatal("failed creating new beestore")
+	}
+
+	t.Run("soc chunk", func(t *testing.T) {
+		_, err = st.Put(context.TODO(), storage.ModePutUpload, sch.Chunk())
 		if err != nil {
-			t.Fatal("failed creating new beestore")
+			t.Fatal(err)
 		}
-
-		t.Cleanup(func() {
-			err := st.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
-
-		ctx := context.Background()
-
-		for i := 0; i < 50; i++ {
-			ch := testingc.GenerateTestRandomChunk()
-			_, err := st.Put(ctx, storage.ModePutUpload, ch)
-			if err != nil {
-				t.Fatal(err)
-			}
-			chResult, err := st.Get(ctx, storage.ModeGetRequest, ch.Address())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !ch.Equal(chResult) {
-				t.Fatal("chunk mismatch")
-			}
+		chResult, err := st.Get(context.TODO(), storage.ModeGetRequest, sch.Address())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sch.Chunk().Equal(chResult) {
+			t.Fatal("chunk mismatch")
 		}
 	})
 
-	t.Run("read-only", func(t *testing.T) {
-		st, err := beestore.NewBeeStore(host, port, false, false, bId, true)
-		if err != nil {
-			t.Fatal("failed creating new beestore")
-		}
-
-		t.Cleanup(func() {
-			err := st.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
-
+	t.Run("cac chunk fails", func(t *testing.T) {
 		ch := testingc.GenerateTestRandomChunk()
-		_, err = st.Put(context.TODO(), storage.ModePutUpload, ch)
+		_, err := st.Put(context.TODO(), storage.ModePutUpload, ch)
 		if err == nil {
-			t.Fatal("expected error while putting")
+			t.Fatal("expected failure for cac")
 		}
 	})
+
 }
 
 // newTestServer creates an http server to serve the bee http api endpoints.
