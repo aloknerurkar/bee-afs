@@ -254,3 +254,43 @@ func TestFileReader(t *testing.T) {
 	// Test after new reader initialized after sync
 	iotest.TestReader(f, data)
 }
+
+func TestFileReference(t *testing.T) {
+	st := mock.NewStorer()
+	f1 := file.New(swarm.ZeroAddress, st, false)
+	f2 := file.New(swarm.ZeroAddress, st, false)
+
+	data := make([]byte, 1024*1024)
+	rand.Read(data)
+
+	for off := 0; off < 1024*1024; off += 1024 {
+		n, err := f1.Write(data[off : off+1024])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1024 {
+			t.Fatalf("incorrect write expected 1024 found %d", n)
+		}
+		n, err = f2.Write(data[off : off+1024])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != 1024 {
+			t.Fatalf("incorrect write expected 1024 found %d", n)
+		}
+	}
+
+	ref1, err := f1.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ref2, err := f2.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ref1.Equal(ref2) {
+		t.Fatal("references not equal")
+	}
+}

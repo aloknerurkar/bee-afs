@@ -178,10 +178,13 @@ func (f *BeeFile) ReadAt(b []byte, off int64) (n int, err error) {
 func (f *BeeFile) Write(b []byte) (n int, err error) {
 	off := f.wOff.Add(int64(len(b)))
 
+	bcopy := make([]byte, len(b))
+	copy(bcopy, b)
+
 	newOp := &writeOp{
 		start: off - int64(len(b)),
 		end:   off,
-		buf:   b,
+		buf:   bcopy,
 		tmsp:  time.Now().UnixNano(),
 	}
 	f.enqueueWriteOp(newOp)
@@ -189,10 +192,13 @@ func (f *BeeFile) Write(b []byte) (n int, err error) {
 }
 
 func (f *BeeFile) WriteAt(b []byte, off int64) (n int, err error) {
+	bcopy := make([]byte, len(b))
+	copy(bcopy, b)
+
 	newOp := &writeOp{
 		start: off,
 		end:   off + int64(len(b)),
-		buf:   b,
+		buf:   bcopy,
 		tmsp:  time.Now().UnixNano(),
 	}
 	f.enqueueWriteOp(newOp)
