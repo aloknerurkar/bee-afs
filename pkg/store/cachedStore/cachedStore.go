@@ -3,6 +3,7 @@ package cachedStore
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/ethersphere/bee/pkg/storage"
@@ -16,10 +17,11 @@ var log = logger.Logger("cachedStore")
 type cachedStore struct {
 	store.PutGetter
 	cache *lru.Cache
+	mtx   sync.RWMutex
 }
 
 func New(st store.PutGetter) (*cachedStore, error) {
-	cache, err := lru.New(10000)
+	cache, err := lru.New(100000)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating cache %w", err)
 	}
@@ -27,11 +29,15 @@ func New(st store.PutGetter) (*cachedStore, error) {
 }
 
 func (c *cachedStore) Get(ctx context.Context, md storage.ModeGet, address swarm.Address) (ch swarm.Chunk, err error) {
+	c.mtx.RLock()
 	chEntry, found := c.cache.Get(address.ByteString())
+	c.mtx.RUnlock()
 	if !found {
 		ch, err = c.PutGetter.Get(ctx, md, address)
 		if err == nil {
+			c.mtx.Lock()
 			_ = c.cache.Add(address.ByteString(), ch)
+			c.mtx.Unlock()
 			log.Debugf("adding chunk to cache %s", ch.Address().String())
 		}
 	} else {
@@ -45,7 +51,9 @@ func (c *cachedStore) Put(ctx context.Context, md storage.ModePut, chs ...swarm.
 	_, err = c.PutGetter.Put(ctx, md, chs...)
 	if err == nil {
 		for _, ch := range chs {
+			c.mtx.Lock()
 			_ = c.cache.Add(ch.Address().ByteString(), ch)
+			c.mtx.Unlock()
 			log.Debugf("adding chunk to cache %s", ch.Address().String())
 		}
 	}
