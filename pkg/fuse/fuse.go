@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -422,12 +421,6 @@ func (b *BeeFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 
 func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	defer b.synchronize()()
-	defer func() {
-		if r := recover(); r != nil {
-			debug.PrintStack()
-			fmt.Println("Recovered in f", r)
-		}
-	}()
 
 	node := b.getNode(path, fh)
 	if nil == node {

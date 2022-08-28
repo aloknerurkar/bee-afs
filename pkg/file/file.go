@@ -41,25 +41,24 @@ func isZeroAddress(ref swarm.Address) bool {
 }
 
 func New(addr swarm.Address, store store.PutGetter, encrypt bool) *BeeFile {
-	synced := atomic.NewBool(!isZeroAddress(addr))
 	return &BeeFile{
 		store:     store,
 		encrypt:   encrypt,
 		reference: addr,
-		synced:    *synced,
+		synced:    !isZeroAddress(addr),
 	}
 }
 
 type BeeFile struct {
 	mtx            sync.Mutex
-	rdrUseful      atomic.Bool
-	rdrOff         atomic.Int64
+	rdrUseful      bool
+	rdrOff         int64
 	rdr            Reader
-	wOff           atomic.Int64
-	size           atomic.Int64
+	size           int64
+	wOff           int64
 	writesInFlight []*writeOp
 	reference      swarm.Address
-	synced         atomic.Bool
+	synced         bool
 	store          store.PutGetter
 	sf             singleflight.Group
 	encrypt        bool
@@ -74,24 +73,19 @@ func (f *BeeFile) synchronize() func() {
 	}
 }
 
+// this function should be called under lock
 func (f *BeeFile) reader() (io.ReaderAt, error) {
-	if !f.rdrUseful.Load() && !isZeroAddress(f.reference) {
-		// use singleflight
-		_, err, _ := f.sf.Do("create reader", func() (res interface{}, err error) {
-			f.rdr, _, err = joiner.New(context.Background(), f.store, f.reference)
-			if err != nil {
-				return nil, err
-			}
-			_, err = f.rdr.Seek(f.rdrOff.Load(), 0)
-			if err != nil {
-				return nil, err
-			}
-			f.rdrUseful.Store(true)
-			return f.rdr, nil
-		})
+	if !f.rdrUseful && !isZeroAddress(f.reference) {
+		rdr, _, err := joiner.New(context.Background(), f.store, f.reference)
 		if err != nil {
 			return nil, err
 		}
+		_, err = rdr.Seek(f.rdrOff, 0)
+		if err != nil {
+			return nil, err
+		}
+		f.rdrUseful = true
+		f.rdr = rdr
 	}
 	return &inmemWrappedReader{f}, nil
 }
@@ -105,7 +99,7 @@ type inmemWrappedReader struct {
 func (i *inmemWrappedReader) ReadAt(buf []byte, off int64) (n int, err error) {
 	patches := i.getPatches(off, off+int64(len(buf)))
 	if len(patches) == 1 &&
-		(len(patches[0].buf) == len(buf) || (off+int64(len(patches[0].buf)) == i.f.size.Load())) {
+		(len(patches[0].buf) == len(buf) || (off+int64(len(patches[0].buf)) == i.f.size)) {
 		copy(buf, patches[0].buf)
 		return len(patches[0].buf), nil
 	}
@@ -122,9 +116,8 @@ func (i *inmemWrappedReader) ReadAt(buf []byte, off int64) (n int, err error) {
 	return 0, io.EOF
 }
 
+// this function should be used by BeeFile under lock
 func (i *inmemWrappedReader) getPatches(start, end int64) (patches []*patch) {
-	defer i.f.synchronize()()
-
 	for _, v := range i.f.writesInFlight {
 		if start >= v.end {
 			continue
@@ -155,19 +148,23 @@ func (i *inmemWrappedReader) getPatches(start, end int64) (patches []*patch) {
 }
 
 func (f *BeeFile) Read(b []byte) (n int, err error) {
+	defer f.synchronize()()
+
 	rdr, err := f.reader()
 	if err != nil {
 		return 0, err
 	}
-	n, err = rdr.ReadAt(b, f.rdrOff.Load())
+	n, err = rdr.ReadAt(b, f.rdrOff)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
-	f.rdrOff.Add(int64(n))
+	f.rdrOff += int64(n)
 	return n, err
 }
 
 func (f *BeeFile) ReadAt(b []byte, off int64) (n int, err error) {
+	defer f.synchronize()()
+
 	rdr, err := f.reader()
 	if err != nil {
 		return 0, err
@@ -176,22 +173,25 @@ func (f *BeeFile) ReadAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *BeeFile) Write(b []byte) (n int, err error) {
-	off := f.wOff.Add(int64(len(b)))
+	defer f.synchronize()()
 
 	bcopy := make([]byte, len(b))
 	copy(bcopy, b)
 
 	newOp := &writeOp{
-		start: off - int64(len(b)),
-		end:   off,
+		start: f.wOff,
+		end:   f.wOff + int64(len(b)),
 		buf:   bcopy,
 		tmsp:  time.Now().UnixNano(),
 	}
 	f.enqueueWriteOp(newOp)
+	f.wOff += int64(len(b))
 	return len(b), nil
 }
 
 func (f *BeeFile) WriteAt(b []byte, off int64) (n int, err error) {
+	defer f.synchronize()()
+
 	bcopy := make([]byte, len(b))
 	copy(bcopy, b)
 
@@ -206,8 +206,6 @@ func (f *BeeFile) WriteAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *BeeFile) enqueueWriteOp(op *writeOp) {
-	defer f.synchronize()()
-
 	if f.writesInFlight == nil {
 		f.writesInFlight = make([]*writeOp, 0)
 	}
@@ -227,10 +225,10 @@ func (f *BeeFile) enqueueWriteOp(op *writeOp) {
 		f.writesInFlight = append(f.writesInFlight[:idx], append([]*writeOp{op}, f.writesInFlight[idx:]...)...)
 	}
 	f.writesInFlight = merge(f.writesInFlight)
-	if f.writesInFlight[len(f.writesInFlight)-1].end > f.size.Load() {
-		f.size.Store(f.writesInFlight[len(f.writesInFlight)-1].end)
+	if f.writesInFlight[len(f.writesInFlight)-1].end > f.size {
+		f.size = f.writesInFlight[len(f.writesInFlight)-1].end
 	}
-	f.synced.Store(false)
+	f.synced = false
 	return
 }
 
@@ -270,31 +268,42 @@ func merge(writeOps []*writeOp) (merged []*writeOp) {
 }
 
 func (f *BeeFile) Sync() error {
-	f.rdrOff.Store(int64(0))
+	defer f.synchronize()()
+
+	return f.sync()
+}
+
+// should be called under lock
+func (f *BeeFile) sync() error {
+	f.rdrOff = int64(0)
 	rdr, err := f.reader()
 	if err != nil {
 		return err
 	}
 	splitter := splitter.NewSimpleSplitter(f.store, storage.ModePutUpload)
-	ref, err := splitter.Split(context.Background(), &readCloser{rdr: rdr}, f.size.Load(), f.encrypt)
+	ref, err := splitter.Split(context.Background(), &readCloser{rdr: rdr}, f.size, f.encrypt)
 	if err != nil {
 		return err
 	}
 	f.reference = ref
-	f.synced.Store(true)
-	f.rdrUseful.Store(false)
+	f.synced = true
+	f.rdrUseful = false
 	f.writesInFlight = nil
 	return nil
 }
 
 func (f *BeeFile) Truncate(sz int64) error {
-	f.size.Store(sz)
+	defer f.synchronize()()
+
+	f.size = sz
 	return nil
 }
 
 func (f *BeeFile) Close() (swarm.Address, error) {
-	if !f.synced.Load() {
-		err := f.Sync()
+	defer f.synchronize()()
+
+	if !f.synced {
+		err := f.sync()
 		if err != nil {
 			return swarm.ZeroAddress, err
 		}
@@ -303,13 +312,16 @@ func (f *BeeFile) Close() (swarm.Address, error) {
 }
 
 type readCloser struct {
-	off atomic.Int64
+	mtx sync.Mutex
+	off int64
 	rdr io.ReaderAt
 }
 
 func (r *readCloser) Read(buf []byte) (n int, err error) {
-	currentOff := r.off.Load()
-	r.off.CAS(currentOff, currentOff+int64(len(buf)))
+	r.mtx.Lock()
+	currentOff := r.off
+	r.off += int64(len(buf))
+	r.mtx.Unlock()
 	return r.rdr.ReadAt(buf, currentOff)
 }
 
