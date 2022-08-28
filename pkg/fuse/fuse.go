@@ -402,21 +402,14 @@ func (b *BeeFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 		return -fuse.ENOENT
 	}
 	var err error
-	if cap(buff)-len(buff) > 1024 {
-		dBuf := make([]byte, len(buff))
-		n, err = node.data.ReadAt(dBuf, ofst)
-		if err == nil {
-			copy(buff, dBuf)
-		}
-	} else {
-		n, err = node.data.ReadAt(buff, ofst)
-	}
+	dBuf := make([]byte, len(buff))
+	n, err = node.data.ReadAt(dBuf, ofst)
 	if err != nil {
 		log.Error("failed read", err)
 		return -fuse.EIO
 	}
 	node.stat.Atim = fuse.Now()
-	return n
+	return copy(buff, dBuf[:n])
 }
 
 func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {

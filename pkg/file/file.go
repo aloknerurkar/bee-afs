@@ -7,14 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/ethersphere/bee/pkg/file/joiner"
 	"github.com/ethersphere/bee/pkg/file/splitter"
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
-	"go.uber.org/atomic"
 )
 
 type writeOp struct {
@@ -60,10 +57,7 @@ type BeeFile struct {
 	reference      swarm.Address
 	synced         bool
 	store          store.PutGetter
-	sf             singleflight.Group
 	encrypt        bool
-
-	inmem *atomic.Uint64
 }
 
 func (f *BeeFile) synchronize() func() {
