@@ -186,6 +186,35 @@ func TestFileHybrid(t *testing.T) {
 		copy(testBuf[2000:2000+len(rand256b)], rand256b)
 	})
 
+	t.Run("overrite already written block", func(t *testing.T) {
+		rand512b := make([]byte, 512)
+
+		rand.Read(rand512b)
+
+		n, err := f.WriteAt(rand512b, 400)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != len(rand512b) {
+			t.Fatalf("invalid length of read exp: %d found: %d", len(rand512b), n)
+		}
+
+		copy(testBuf[400:400+len(rand512b)], rand512b)
+
+		rand256b := make([]byte, 256)
+		rand.Read(rand256b)
+
+		n, err = f.WriteAt(rand256b, 2000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != len(rand256b) {
+			t.Fatalf("invalid length of read exp: %d found: %d", len(rand512b), n)
+		}
+
+		copy(testBuf[2000:2000+len(rand256b)], rand256b)
+	})
+
 	t.Run("readAt after hybrid state", func(t *testing.T) {
 		for i := 0; i < 4; i++ {
 			start := int64(i * 1024)
