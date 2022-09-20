@@ -124,6 +124,66 @@ func TestFileBasic(t *testing.T) {
 	}
 }
 
+func TestFileBasicTruncate(t *testing.T) {
+	st := mock.NewStorer()
+	_, mntDir, closer, err := newTestFs(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
+
+	time.Sleep(time.Second)
+
+	content := []byte("hello world")
+	fn := filepath.Join(mntDir, "file1")
+
+	if err := os.WriteFile(fn, content, 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if got, err := os.ReadFile(fn); err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	} else if bytes.Compare(got, content) != 0 {
+		t.Fatalf("ReadFile: got %q, want %q", got, content)
+	}
+
+	f, err := os.Open(fn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Fstat: %v", err)
+	} else if int(fi.Size()) != len(content) {
+		t.Errorf("got size %d want 5", fi.Size())
+	}
+	if got, want := uint32(fi.Mode()), uint32(0755); got != want {
+		t.Errorf("Fstat: got mode %o, want %o", got, want)
+	}
+	if err := f.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+
+	err = os.Truncate(fn, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newContent := []byte("world")
+	err = os.WriteFile(fn,newContent, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(fn)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	if bytes.Compare(got, newContent) != 0 {
+		t.Fatalf("ReadFile: got %q, want %q", got, newContent)
+	}
+}
+
 func TestMultiDirWithFiles(t *testing.T) {
 	entries := []struct {
 		path    string
