@@ -48,7 +48,7 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	}
 
 	lk := lookuper.New(st, owner)
-	pb := publisher.New(st, signer)
+	pb := publisher.New(st, signer, lookuper.Latest(st, owner))
 	cLkPb, err := cached.New(lk, pb, time.Second)
 	if err != nil {
 		return nil, "", func() {}, err
