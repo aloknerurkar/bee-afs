@@ -14,7 +14,7 @@ import (
 	logger "github.com/ipfs/go-log/v2"
 )
 
-var log = logger.Logger("lookuper")
+var log = logger.Logger("publisher")
 
 type Publisher interface {
 	Put(ctx context.Context, id string, version int64, ref swarm.Address) error
@@ -45,6 +45,7 @@ func (p *pubImpl) Put(ctx context.Context, id string, version int64, ref swarm.A
 	if !found {
 		currIndex, at, err := p.loader(ctx, id)
 		if err == nil {
+			log.Infof("publisher: loaded initial version %s timestamp %d", currIndex, at)
 			nxtIndex = currIndex.Next(at, uint64(version))
 		} else {
 			nxtIndex = new(index)
