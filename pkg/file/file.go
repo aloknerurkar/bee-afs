@@ -7,14 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/ethersphere/bee/pkg/file/joiner"
 	"github.com/ethersphere/bee/pkg/file/splitter"
 	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
 	"go.uber.org/atomic"
+	"golang.org/x/sync/singleflight"
 )
 
 type writeOp struct {
