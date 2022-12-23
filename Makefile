@@ -30,6 +30,6 @@ clean:
 
 .PHONY: binary
 binary: export CGO_ENABLED=1
-binary: dist FORCE
+binary: dist
 	$(GO) version
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/bee-afs ./cmd
