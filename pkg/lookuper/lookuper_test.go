@@ -2,6 +2,7 @@ package lookuper_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"testing"
 	"time"
@@ -34,6 +35,8 @@ func TestLookuper(t *testing.T) {
 
 	lkpr := lookuper.New(st, owner)
 
+	var lastUpdate int64
+
 	for i := 1; i <= 3; i++ {
 		now := time.Now().Unix()
 		ref := swarm.MustParseHexAddress(fmt.Sprintf("%d000000000000000000000000000000000000000000000000000000000000000", i))
@@ -50,12 +53,13 @@ func TestLookuper(t *testing.T) {
 			if !ref2.Equal(ref) {
 				t.Fatalf("lookup returned invalid ref exp %s found %s", ref.String(), ref2.String())
 			}
+			lastUpdate = now
 		})
 	}
 
 	time.Sleep(time.Second)
 
-	t.Run("latest", func(t *testing.T) {
+	t.Run("latest get", func(t *testing.T) {
 		ref, err := lkpr.Get(context.TODO(), testID, time.Now().Unix())
 		if err != nil {
 			t.Fatal(err)
@@ -63,6 +67,24 @@ func TestLookuper(t *testing.T) {
 		exp := swarm.MustParseHexAddress("3000000000000000000000000000000000000000000000000000000000000000")
 		if !ref.Equal(exp) {
 			t.Fatalf("lookup returned invalid ref exp %s found %s", exp.String(), ref.String())
+		}
+	})
+
+	t.Run("latest", func(t *testing.T) {
+		latestFn := lookuper.Latest(st, owner)
+		idx, at, err := latestFn(context.TODO(), testID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf, err := idx.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if binary.BigEndian.Uint64(buf) != 2 {
+			t.Fatalf("incorrect index %s exp %d", idx, 2)
+		}
+		if at != lastUpdate {
+			t.Fatalf("incorrect timestamp found %d exp %d", at, lastUpdate)
 		}
 	})
 }

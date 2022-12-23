@@ -119,5 +119,9 @@ func getMounts(c *cli.Context, readOnly bool) (mounts.UserMounts, func(), error)
 		return nil, func() {}, fmt.Errorf("failed creating beestore %w", err)
 	}
 
-	return mounts.New(lookuper.New(fStore, owner), publisher.New(fStore, signer), bStore), func() { bStore.Close() }, nil
+	return mounts.New(
+		lookuper.New(fStore, owner),
+		publisher.New(fStore, signer, lookuper.Latest(fStore, owner)),
+		bStore,
+	), func() { bStore.Close() }, nil
 }

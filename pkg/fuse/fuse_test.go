@@ -48,7 +48,7 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	}
 
 	lk := lookuper.New(st, owner)
-	pb := publisher.New(st, signer)
+	pb := publisher.New(st, signer, lookuper.Latest(st, owner))
 	cLkPb, err := cached.New(lk, pb, time.Second)
 	if err != nil {
 		return nil, "", func() {}, err
@@ -82,7 +82,7 @@ func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	}, nil
 }
 
-func TestFileBasic(t *testing.T) {
+func TestFileSystemBasic(t *testing.T) {
 	st := mock.NewStorer()
 	_, mntDir, closer, err := newTestFs(st)
 	if err != nil {
@@ -90,38 +90,49 @@ func TestFileBasic(t *testing.T) {
 	}
 	defer closer()
 
-	time.Sleep(time.Second)
+	t.Run("create directory", func(t *testing.T) {
+		err := os.Mkdir(filepath.Join(mntDir, "dir1"), 0755)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	content := []byte("hello world")
-	fn := filepath.Join(mntDir, "file1")
+	fn := filepath.Join(mntDir, "dir1/file1")
 
-	if err := os.WriteFile(fn, content, 0755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if got, err := os.ReadFile(fn); err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	} else if bytes.Compare(got, content) != 0 {
-		t.Fatalf("ReadFile: got %q, want %q", got, content)
-	}
+	t.Run("create file", func(t *testing.T) {
+		if err := os.WriteFile(fn, content, 0755); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	})
 
-	f, err := os.Open(fn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer f.Close()
+	t.Run("read file", func(t *testing.T) {
+		if got, err := os.ReadFile(fn); err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		} else if bytes.Compare(got, content) != 0 {
+			t.Fatalf("ReadFile: got %q, want %q", got, content)
+		}
+	})
 
-	fi, err := f.Stat()
-	if err != nil {
-		t.Fatalf("Fstat: %v", err)
-	} else if int(fi.Size()) != len(content) {
-		t.Errorf("got size %d want 5", fi.Size())
-	}
-	if got, want := uint32(fi.Mode()), uint32(0755); got != want {
-		t.Errorf("Fstat: got mode %o, want %o", got, want)
-	}
-	if err := f.Close(); err != nil {
-		t.Errorf("Close: %v", err)
-	}
+	t.Run("file stat", func(t *testing.T) {
+		f, err := os.Open(fn)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+
+		fi, err := f.Stat()
+		if err != nil {
+			t.Fatalf("Fstat: %v", err)
+		} else if int(fi.Size()) != len(content) {
+			t.Errorf("got size %d want 5", fi.Size())
+		}
+		if got, want := uint32(fi.Mode()), uint32(0755); got != want {
+			t.Errorf("Fstat: got mode %o, want %o", got, want)
+		}
+		if err := f.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 }
 
 func TestMultiDirWithFiles(t *testing.T) {
