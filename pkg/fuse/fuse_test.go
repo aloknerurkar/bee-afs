@@ -26,14 +26,9 @@ import (
 var debug = flag.Bool("debug", false, "FUSE debug logs")
 var logs = flag.Bool("logs", false, "Enable logs")
 
-type testStorer struct {
-	*mock.MockStorer
-	mp map[string][]byte
-}
-
 func newTestFs(st store.PutGetter) (*fs.BeeFs, string, func(), error) {
 	if *logs {
-		logger.SetLogLevel("*", "Debug")
+		_ = logger.SetLogLevel("*", "Debug")
 	}
 	mntDir, err := ioutil.TempDir("", "tmpfuse")
 	if err != nil {
@@ -109,7 +104,7 @@ func TestFileSystemBasic(t *testing.T) {
 	t.Run("read file", func(t *testing.T) {
 		if got, err := os.ReadFile(fn); err != nil {
 			t.Fatalf("ReadFile: %v", err)
-		} else if bytes.Compare(got, content) != 0 {
+		} else if !bytes.Equal(got, content) {
 			t.Fatalf("ReadFile: got %q, want %q", got, content)
 		}
 	})
@@ -253,7 +248,7 @@ func TestMultiDirWithFiles(t *testing.T) {
 				}
 				if got, err := ioutil.ReadFile(filepath.Join(mnt, v.path)); err != nil {
 					t.Fatalf("ReadFile: %v", err)
-				} else if bytes.Compare(got, v.content) != 0 {
+				} else if !bytes.Equal(got, v.content) {
 					t.Fatalf("ReadFile: got %q, want %q", got[:30], v.content[:30])
 				}
 			}

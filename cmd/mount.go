@@ -32,7 +32,7 @@ func doMount(c *cli.Context) error {
 	}
 
 	if c.Bool("debug") {
-		logger.SetLogLevel("*", "debug")
+		_ = logger.SetLogLevel("*", "debug")
 	}
 
 	mnts, done, err := getMounts(c, true)

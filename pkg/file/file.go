@@ -31,10 +31,7 @@ func isZeroAddress(ref swarm.Address) bool {
 		return true
 	}
 	zeroAddr := make([]byte, 32)
-	if swarm.NewAddress(zeroAddr).Equal(ref) {
-		return true
-	}
-	return false
+	return swarm.NewAddress(zeroAddr).Equal(ref)
 }
 
 func New(addr swarm.Address, store store.PutGetter, encrypt bool) *BeeFile {
@@ -227,7 +224,6 @@ func (f *BeeFile) enqueueWriteOp(op *writeOp) {
 		f.size = f.writesInFlight[len(f.writesInFlight)-1].end
 	}
 	f.synced = false
-	return
 }
 
 func merge(writeOps []*writeOp) (merged []*writeOp) {
@@ -336,7 +332,7 @@ func (r *readCloser) Read(buf []byte) (n int, err error) {
 	r.mtx.Unlock()
 	sBuf := make([]byte, bufSize)
 	n, err = r.rdr.ReadAt(sBuf, currentOff)
-	return copy(buf, sBuf), err
+	return copy(buf, sBuf[:n]), err
 }
 
 func (r *readCloser) Close() error {
