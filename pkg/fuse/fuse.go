@@ -41,10 +41,7 @@ type fsNode struct {
 }
 
 func (f *fsNode) isDir() bool {
-	if f.stat.Mode&fuse.S_IFDIR > 0 {
-		return true
-	}
-	return false
+	return f.stat.Mode&fuse.S_IFDIR > 0
 }
 
 func (f *fsNode) Close() error {

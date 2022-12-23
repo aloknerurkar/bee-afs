@@ -16,7 +16,9 @@ import (
 )
 
 func TestLookuper(t *testing.T) {
-	logger.SetLogLevel("*", "Error")
+	// set higher level here if required
+	_ = logger.SetLogLevel("*", "Error")
+
 	st := mock.NewStorer()
 	testID := "test"
 
@@ -41,7 +43,10 @@ func TestLookuper(t *testing.T) {
 		now := time.Now().Unix()
 		ref := swarm.MustParseHexAddress(fmt.Sprintf("%d000000000000000000000000000000000000000000000000000000000000000", i))
 
-		upd.Update(context.TODO(), now, ref.Bytes())
+		err := upd.Update(context.TODO(), now, ref.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		time.Sleep(time.Second * 2)
 

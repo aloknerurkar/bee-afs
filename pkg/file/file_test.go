@@ -6,7 +6,6 @@ import (
 	"io"
 	"math/rand"
 	"testing"
-	"testing/iotest"
 
 	"github.com/aloknerurkar/bee-afs/pkg/file"
 	"github.com/ethersphere/bee/pkg/storage/mock"
@@ -39,7 +38,7 @@ func TestFileBasic(t *testing.T) {
 				if n != len(newBuf) {
 					t.Fatalf("invalid length of read exp: %d found: %d", len(testBufs[idx]), n)
 				}
-				if bytes.Compare(newBuf, testBufs[idx]) != 0 {
+				if !bytes.Equal(newBuf, testBufs[idx]) {
 					t.Fatal("read bytes not equal")
 				}
 			}
@@ -87,7 +86,7 @@ func TestFileBasic(t *testing.T) {
 				off += n
 			}
 
-			if bytes.Compare(readData, completeData) != 0 {
+			if !bytes.Equal(readData, completeData) {
 				t.Fatal("read bytes not equal")
 			}
 
@@ -152,7 +151,7 @@ func TestFileHybrid(t *testing.T) {
 		if n != len(newBuf) {
 			t.Fatalf("invalid length of read exp: %d found: %d", len(testBuf), n)
 		}
-		if bytes.Compare(newBuf, testBuf) != 0 {
+		if !bytes.Equal(newBuf, testBuf) {
 			t.Fatal("read bytes not equal")
 		}
 	})
@@ -227,7 +226,7 @@ func TestFileHybrid(t *testing.T) {
 			if n != len(buf) {
 				t.Fatalf("invalid length of read exp: %d found: %d", len(buf), n)
 			}
-			if bytes.Compare(buf, testBuf[start:start+1024]) != 0 {
+			if !bytes.Equal(buf, testBuf[start:start+1024]) {
 				t.Fatal("read bytes not equal")
 			}
 		}
@@ -249,7 +248,7 @@ func TestFileHybrid(t *testing.T) {
 		if n != len(newBuf) {
 			t.Fatalf("invalid length of read exp: %d found: %d", len(testBuf), n)
 		}
-		if bytes.Compare(newBuf, testBuf) != 0 {
+		if !bytes.Equal(newBuf, testBuf) {
 			t.Fatal("read bytes not equal")
 		}
 	})
@@ -276,39 +275,10 @@ func TestFileHybrid(t *testing.T) {
 		if n != sz {
 			t.Fatalf("invalid length of read exp: %d found: %d", sz, n)
 		}
-		if bytes.Compare(newBuf[:sz], testBuf[:sz]) != 0 {
+		if !bytes.Equal(newBuf[:sz], testBuf[:sz]) {
 			t.Fatal("read bytes not equal")
 		}
 	})
-}
-
-func TestFileReader(t *testing.T) {
-	st := mock.NewStorer()
-	f := file.New(swarm.ZeroAddress, st, false)
-
-	data := make([]byte, 1024*1024)
-	rand.Read(data)
-
-	for off := 0; off < 1024*1024; off += 1024 {
-		n, err := f.Write(data[off : off+1024])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n != 1024 {
-			t.Fatalf("incorrect write expected 1024 found %d", n)
-		}
-	}
-
-	// Test reader after writing inmem
-	iotest.TestReader(f, data)
-
-	err := f.Sync()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Test after new reader initialized after sync
-	iotest.TestReader(f, data)
 }
 
 func TestFileReference(t *testing.T) {
