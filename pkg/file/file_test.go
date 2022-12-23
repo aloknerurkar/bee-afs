@@ -253,6 +253,33 @@ func TestFileHybrid(t *testing.T) {
 			t.Fatal("read bytes not equal")
 		}
 	})
+
+	t.Run("truncate", func(t *testing.T) {
+		sz := len(testBuf) - 1024
+		err := f.Truncate(int64(sz))
+		if err != nil {
+			t.Fatalf("failed executing truncate call %v", err)
+		}
+
+		ref, err := f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		f2 := file.New(ref, st, false)
+
+		newBuf := make([]byte, len(testBuf))
+		n, err := f2.Read(newBuf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != sz {
+			t.Fatalf("invalid length of read exp: %d found: %d", sz, n)
+		}
+		if bytes.Compare(newBuf[:sz], testBuf[:sz]) != 0 {
+			t.Fatal("read bytes not equal")
+		}
+	})
 }
 
 func TestFileReader(t *testing.T) {

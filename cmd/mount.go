@@ -145,7 +145,7 @@ func getCachedLookuperPublisher(c *cli.Context, b store.PutGetter, batch string)
 	}
 
 	lk := lookuper.New(fStore, owner)
-	pb := publisher.New(fStore, signer)
+	pb := publisher.New(fStore, signer, lookuper.Latest(fStore, owner))
 
 	cachedLkPb, err := cached.New(lk, pb, 5*time.Second)
 	if err != nil {

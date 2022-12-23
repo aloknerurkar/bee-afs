@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/aloknerurkar/bee-afs/pkg/store"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethersphere/bee/pkg/feeds"
 	"github.com/ethersphere/bee/pkg/feeds/factory"
 	"github.com/ethersphere/bee/pkg/soc"
+	"github.com/ethersphere/bee/pkg/storage"
 	"github.com/ethersphere/bee/pkg/swarm"
 	logger "github.com/ipfs/go-log/v2"
 )
@@ -90,4 +92,32 @@ func ParseFeedUpdate(ch swarm.Chunk) (swarm.Address, int64, error) {
 	ts := binary.BigEndian.Uint64(update[8:16])
 	ref := swarm.NewAddress(update[16:])
 	return ref, int64(ts), nil
+}
+
+func Latest(
+	store storage.Getter,
+	owner common.Address,
+) func(ctx context.Context, id string) (feeds.Index, int64, error) {
+	return func(ctx context.Context, id string) (feeds.Index, int64, error) {
+		lk, err := factory.New(store).NewLookup(feeds.Sequence, feeds.New([]byte(id), owner))
+		if err != nil {
+			return nil, 0, err
+		}
+
+		ch, current, _, err := lk.At(ctx, time.Now().Unix(), 0)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if ch == nil {
+			return nil, 0, errors.New("invalid chunk")
+		}
+
+		_, ts, err := ParseFeedUpdate(ch)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		return current, ts, nil
+	}
 }

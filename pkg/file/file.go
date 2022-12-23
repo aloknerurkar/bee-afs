@@ -80,6 +80,10 @@ func (f *BeeFile) reader() (io.ReaderAt, error) {
 		}
 		f.rdrUseful = true
 		f.rdr = rdr
+		// if we are reading from scratch get the length from the joiner
+		if f.size == 0 {
+			f.size = rdr.Size()
+		}
 	}
 	return &inmemWrappedReader{f}, nil
 }
@@ -275,7 +279,7 @@ func (f *BeeFile) sync() error {
 		return err
 	}
 	splitter := splitter.NewSimpleSplitter(f.store, storage.ModePutUpload)
-	ref, err := splitter.Split(context.Background(), &readCloser{rdr: rdr}, f.size, f.encrypt)
+	ref, err := splitter.Split(context.Background(), &readCloser{rdr: rdr, sz: f.size}, f.size, f.encrypt)
 	if err != nil {
 		return err
 	}
@@ -290,6 +294,9 @@ func (f *BeeFile) Truncate(sz int64) error {
 	defer f.synchronize()()
 
 	f.size = sz
+	f.rdrUseful = false
+	f.synced = false
+	f.rdrOff = 0
 	return nil
 }
 
@@ -308,15 +315,28 @@ func (f *BeeFile) Close() (swarm.Address, error) {
 type readCloser struct {
 	mtx sync.Mutex
 	off int64
+	sz  int64
 	rdr io.ReaderAt
 }
 
 func (r *readCloser) Read(buf []byte) (n int, err error) {
 	r.mtx.Lock()
+	if r.off >= r.sz {
+		return 0, io.EOF
+	}
 	currentOff := r.off
-	r.off += int64(len(buf))
+	bufSize := int64(len(buf))
+	r.off += bufSize
+	// In case of file truncation, or deletion from file, the size would be lesser
+	// than the synced length. This is why we will have to use a secondary buffer
+	// to only read till the new length to sync
+	if r.off > r.sz {
+		bufSize = r.sz - currentOff
+	}
 	r.mtx.Unlock()
-	return r.rdr.ReadAt(buf, currentOff)
+	sBuf := make([]byte, bufSize)
+	n, err = r.rdr.ReadAt(sBuf, currentOff)
+	return copy(buf, sBuf), err
 }
 
 func (r *readCloser) Close() error {

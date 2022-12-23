@@ -101,8 +101,8 @@ func fromMetadata(reader io.Reader) (FsMetadata, error) {
 type BeeFs struct {
 	fuse.FileSystemBase
 	lock    sync.Mutex
-	ino     uint64
 	openmap map[uint64]*fsNode
+	openfh  map[string]uint64
 	encrypt bool
 	store   store.PutGetter
 	id      string
@@ -131,15 +131,16 @@ func New(
 	opts ...Option,
 ) (*BeeFs, error) {
 	b := &BeeFs{
-		id:    "bee-afs",
-		store: st,
-		lk:    lk,
-		pb:    pb,
+		id:      "bee-afs",
+		store:   st,
+		lk:      lk,
+		pb:      pb,
+		openmap: make(map[uint64]*fsNode),
+		openfh:  make(map[string]uint64),
 	}
 	for _, opt := range opts {
 		opt(b)
 	}
-	b.openmap = map[uint64]*fsNode{}
 	return b, nil
 }
 
@@ -148,9 +149,8 @@ func (b *BeeFs) Init() {
 
 	rootNode := b.lookupNode("/")
 	if rootNode == nil {
-		b.ino++
 		uid, gid, _ := fuse.Getcontext()
-		node := b.newNode("/", 0, b.ino, fuse.S_IFDIR|00777, uid, gid)
+		node := b.newNode("/", 0, uint64(time.Now().UnixNano()), fuse.S_IFDIR|00777, uid, gid)
 		err := node.Close()
 		if err != nil {
 			panic(err)
@@ -438,7 +438,7 @@ func (b *BeeFs) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 func (b *BeeFs) Release(path string, fh uint64) (errc int) {
 	defer b.synchronize()()
 
-	return b.closeNode(fh)
+	return b.closeNode(path, fh)
 }
 
 func (b *BeeFs) Opendir(path string) (errc int, fh uint64) {
@@ -474,7 +474,7 @@ func (b *BeeFs) Readdir(
 func (b *BeeFs) Releasedir(path string, fh uint64) (errc int) {
 	defer b.synchronize()()
 
-	return b.closeNode(fh)
+	return b.closeNode(path, fh)
 }
 
 func (b *BeeFs) Setxattr(path string, name string, value []byte, flags int) (errc int) {
@@ -749,9 +749,8 @@ func (b *BeeFs) makeNode(path string, mode uint32, dev uint64, data []byte) int 
 	if nil != node {
 		return -fuse.EEXIST
 	}
-	b.ino++
 	uid, gid, _ := fuse.Getcontext()
-	node = b.newNode(path, dev, b.ino, mode, uid, gid)
+	node = b.newNode(path, dev, uint64(time.Now().UnixNano()), mode, uid, gid)
 	if nil != data {
 		n, err := node.data.Write(data)
 		if err != nil {
@@ -827,12 +826,21 @@ func (b *BeeFs) openNode(path string, dir bool) (int, uint64) {
 	node.opencnt++
 	if 1 == node.opencnt {
 		b.openmap[node.stat.Ino] = node
+		b.openfh[path] = node.stat.Ino
 	}
 	return 0, node.stat.Ino
 }
 
-func (b *BeeFs) closeNode(fh uint64) int {
-	node := b.openmap[fh]
+func (b *BeeFs) closeNode(path string, fh uint64) int {
+	if ^uint64(0) == fh {
+		if actualFh, found := b.openfh[path]; found {
+			fh = actualFh
+		}
+	}
+	node, found := b.openmap[fh]
+	if !found {
+		return 0
+	}
 	node.opencnt--
 	if 0 == node.opencnt {
 		err := node.Close()
@@ -840,11 +848,17 @@ func (b *BeeFs) closeNode(fh uint64) int {
 			return -fuse.EIO
 		}
 		delete(b.openmap, node.stat.Ino)
+		delete(b.openfh, path)
 	}
 	return 0
 }
 
 func (b *BeeFs) getNode(path string, fh uint64) *fsNode {
+	if ^uint64(0) == fh {
+		if actualFh, found := b.openfh[path]; found {
+			fh = actualFh
+		}
+	}
 	node, found := b.openmap[fh]
 	if found {
 		return node
